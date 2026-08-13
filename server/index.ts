@@ -18,6 +18,14 @@ app.use(cors({
 
 app.use(express.json());
 
+// Path normalizer middleware: accepts requests with or without /api prefix
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  if (!req.path.startsWith('/api') && req.path !== '/health') {
+    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
+  }
+  next();
+});
+
 interface Contact {
   id: string;
   display_name: string;
