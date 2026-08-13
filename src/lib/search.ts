@@ -1,8 +1,13 @@
 import { Note, SearchQuery } from './types';
 
 /**
- * Tokenizes search query strings like "#Finance AND @Yashi", "#Tag1 OR #Tag2",
- * or mixed queries with free-text terms.
+ * Tokenizes search query strings supporting boolean operators:
+ * - AND operators: "AND", "&", "&&"
+ * - OR operators: "OR", "|", "||"
+ * Examples:
+ *   "#work AND #urgent", "#work & #urgent" -> Matches notes with BOTH tags
+ *   "#ideas OR #todo", "#ideas | #todo", "#ideas || #todo" -> Matches notes with EITHER tag
+ *   "project & #important" -> Matches text "project" AND tag "important"
  */
 export function parseSearchQuery(queryStr: string): SearchQuery {
   const raw = queryStr.trim();
@@ -16,20 +21,27 @@ export function parseSearchQuery(queryStr: string): SearchQuery {
     };
   }
 
-  // Detect explicit boolean operator OR vs AND (default AND)
-  const isOr = /\bOR\b/i.test(raw);
+  // Normalize boolean operators: & / && -> AND, | / || -> OR
+  const normalizedRaw = raw
+    .replace(/&&/g, ' AND ')
+    .replace(/&/g, ' AND ')
+    .replace(/\|\|/g, ' OR ')
+    .replace(/\|/g, ' OR ');
+
+  // Detect boolean operator: OR if explicit OR/|/|| is present, otherwise default to AND
+  const isOr = /\bOR\b/i.test(normalizedRaw);
   const operator: 'AND' | 'OR' = isOr ? 'OR' : 'AND';
 
   // Extract tags: #tagname
-  const tagMatches = raw.match(/#[a-zA-Z0-9_\-]{2,30}/g) || [];
+  const tagMatches = normalizedRaw.match(/#[a-zA-Z0-9_\-]{2,30}/g) || [];
   const tags = Array.from(new Set(tagMatches.map((t) => t.substring(1).toLowerCase())));
 
   // Extract mentions: @username
-  const mentionMatches = raw.match(/@[a-zA-Z0-9._\-]{2,30}/g) || [];
+  const mentionMatches = normalizedRaw.match(/@[a-zA-Z0-9._\-]{2,30}/g) || [];
   const mentions = Array.from(new Set(mentionMatches.map((m) => m.substring(1).toLowerCase())));
 
   // Clean out tags, mentions, and operator keywords to get remaining free-text
-  let freetext = raw
+  let freetext = normalizedRaw
     .replace(/#[a-zA-Z0-9_\-]{2,30}/g, '')
     .replace(/@[a-zA-Z0-9._\-]{2,30}/g, '')
     .replace(/\b(AND|OR)\b/gi, '')
@@ -37,7 +49,7 @@ export function parseSearchQuery(queryStr: string): SearchQuery {
     .trim();
 
   return {
-    raw,
+    raw: normalizedRaw,
     tags,
     mentions,
     operator,
@@ -46,7 +58,7 @@ export function parseSearchQuery(queryStr: string): SearchQuery {
 }
 
 /**
- * Filters a collection of notes based on parsed search query logic.
+ * Filters notes collection according to parsed boolean query logic (AND / OR / & / |).
  */
 export function filterNotes(notes: Note[], parsedQuery: SearchQuery): Note[] {
   const { tags, mentions, operator, freetext } = parsedQuery;
@@ -56,38 +68,40 @@ export function filterNotes(notes: Note[], parsedQuery: SearchQuery): Note[] {
   }
 
   const freeTextLower = freetext.toLowerCase();
+  const freeTextWords = freeTextLower.split(' ').filter(Boolean);
 
   return notes.filter((note) => {
     const noteTagNames = (note.tags || []).map((t) => t.name.toLowerCase());
     const noteMentionUsernames = (note.mentions || []).map((m) => m.username.toLowerCase());
     const noteContentLower = note.content.toLowerCase();
 
-    // Check Tag Matches
+    // Tag Matches
     const tagResults = tags.map((t) => noteTagNames.includes(t));
-    
-    // Check Mention Matches
+
+    // Mention Matches
     const mentionResults = mentions.map((m) => noteMentionUsernames.includes(m));
 
-    // Check Free-Text Match
+    // Free-Text Match
     let freetextMatch = true;
-    if (freeTextLower) {
-      const words = freeTextLower.split(' ').filter(Boolean);
+    if (freeTextWords.length > 0) {
       if (operator === 'AND') {
-        freetextMatch = words.every((w) => noteContentLower.includes(w));
+        freetextMatch = freeTextWords.every((w) => noteContentLower.includes(w));
       } else {
-        freetextMatch = words.some((w) => noteContentLower.includes(w));
+        freetextMatch = freeTextWords.some((w) => noteContentLower.includes(w));
       }
     }
 
     if (operator === 'AND') {
-      const allTagsMatch = tagResults.every(Boolean);
-      const allMentionsMatch = mentionResults.every(Boolean);
+      // AND logic: note MUST satisfy all specified tags, mentions, and freetext words
+      const allTagsMatch = tagResults.length === 0 || tagResults.every(Boolean);
+      const allMentionsMatch = mentionResults.length === 0 || mentionResults.every(Boolean);
       return allTagsMatch && allMentionsMatch && freetextMatch;
     } else {
-      // OR logic: match if any tag matches, any mention matches, or freetext matches
+      // OR logic: note matches if ANY tag, ANY mention, or ANY freetext word matches
       const hasAnyTag = tagResults.some(Boolean);
       const hasAnyMention = mentionResults.some(Boolean);
-      return hasAnyTag || hasAnyMention || (Boolean(freeTextLower) && freetextMatch);
+      const hasFreetextMatch = freeTextWords.length > 0 && freetextMatch;
+      return hasAnyTag || hasAnyMention || hasFreetextMatch;
     }
   });
 }
