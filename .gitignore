@@ -1,0 +1,34 @@
+# Environment secret variables (NEVER COMMIT TO GITHUB)
+.env
+.env.local
+.env.*
+*.env
+
+# Dependency directories
+node_modules
+server/node_modules
+
+# Build outputs
+dist
+dist-ssr
+build
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor & OS files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
