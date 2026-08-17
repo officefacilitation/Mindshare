@@ -7,22 +7,7 @@ export interface AITagResponse {
   error?: string;
 }
 
-/**
- * Strips image markdown, standalone URLs, file extensions, and base64 string noise from content
- * so the AI LLM only receives clean human thought text (saving tokens and eliminating junk tags).
- */
-function cleanContentForAI(content: string): string {
-  if (!content) return '';
-  return content
-    .replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/gi, '') // Remove markdown images ![image](url)
-    .replace(/https?:\/\/[^\s]+/gi, '')              // Remove standalone http/https URLs
-    .replace(/data:image\/[a-z]+;base64,[^\s]+/gi, '') // Remove base64 data URIs
-    .trim();
-}
-
-function generateLocalAITags(rawContent: string): AITagResponse {
-  const content = cleanContentForAI(rawContent) || 'Photo attachment note';
-
+function generateLocalAITags(content: string): AITagResponse {
   const stopWords = new Set([
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with',
     'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after',
@@ -30,8 +15,7 @@ function generateLocalAITags(rawContent: string): AITagResponse {
     'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all',
     'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
     'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't',
-    'can', 'will', 'just', 'don', 'should', 'now', 'this', 'that', 'these', 'those',
-    'image', 'jpg', 'png', 'webp', 'jpeg', 'url', 'http', 'https', 'cloudinary'
+    'can', 'will', 'just', 'don', 'should', 'now', 'this', 'that', 'these', 'those'
   ]);
 
   const words = content
@@ -61,15 +45,12 @@ function generateLocalAITags(rawContent: string): AITagResponse {
 }
 
 export async function generateAITags(
-  rawContent: string,
+  content: string,
   userApiKey?: string
 ): Promise<AITagResponse> {
   const apiKey = userApiKey || process.env.GROQ_API_KEY;
 
-  // Clean raw content so image URLs & markdown image syntax are stripped before calling AI
-  const cleanContent = cleanContentForAI(rawContent);
-
-  if (!cleanContent) {
+  if (!content || !content.trim()) {
     return {
       tags: ['photo', 'attachment'],
       summary: 'Image attachment note.',
@@ -79,89 +60,76 @@ export async function generateAITags(
 
   if (!apiKey) {
     console.log('[Backend Groq AI] No GROQ_API_KEY set. Using Intelligent Local Fallback.');
-    return generateLocalAITags(cleanContent);
+    return generateLocalAITags(content);
   }
 
-  const prompt = `Analyze this note text: "${cleanContent.replace(/"/g, '\\"')}".
+  const prompt = `Analyze this note: "${content.replace(/"/g, '\\"').replace(/\n/g, ' ')}".
 Return ONLY a valid JSON object strictly matching this schema with no markdown:
 {
   "tags": ["tag1", "tag2", "tag3"],
   "summary": "1-sentence summary"
 }`;
 
-  // Supported model fallbacks if Groq changes model identifiers
+  // Currently active models on Groq Cloud
   const candidateModels = [
-    process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-    'llama-3.1-70b-versatile',
-    'llama3-70b-8192',
-    'llama3-8b-8192',
+    process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+    'llama-3.3-70b-specdec',
+    'mixtral-8x7b-32768',
+    'gemma2-9b-it',
   ];
 
   for (const modelName of candidateModels) {
-    let attempts = 0;
-    const maxAttempts = 2;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-    while (attempts < maxAttempts) {
-      try {
-        attempts++;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: 'You are an intelligent knowledge base auto-tagger. Output JSON strictly.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.3,
+          max_tokens: 150,
+          response_format: { type: 'json_object' }
+        }),
+        signal: controller.signal,
+      });
 
-        const response = await fetch(GROQ_API_URL, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: modelName,
-            messages: [
-              { role: 'system', content: 'You are an intelligent knowledge base auto-tagger. Output JSON strictly. Never output tags about image file extensions, URLs, or image hosting platforms.' },
-              { role: 'user', content: prompt }
-            ],
-            temperature: 0.3,
-            max_tokens: 150,
-            response_format: { type: 'json_object' }
-          }),
-          signal: controller.signal,
-        });
+      clearTimeout(timeoutId);
 
-        clearTimeout(timeoutId);
-
-        if (response.status === 404) {
-          console.warn(`[Groq AI] Model "${modelName}" returned 404 model_not_found. Retrying next model...`);
-          break; // Break inner loop to try next model in candidateModels
-        }
-
-        if (!response.ok) {
-          throw new Error(`Groq API returned HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        const rawOutput = data?.choices?.[0]?.message?.content;
-        if (!rawOutput) throw new Error('Empty response');
-
-        const parsed = JSON.parse(rawOutput);
-        const invalidAITags = new Set(['image', 'jpg', 'png', 'webp', 'jpeg', 'cloudinary', 'upload', 'http', 'https', 'url']);
-
-        const tags = Array.isArray(parsed.tags)
-          ? parsed.tags
-              .map((t: string) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, ''))
-              .filter((t: string) => Boolean(t) && !invalidAITags.has(t))
-          : [];
-
-        return {
-          tags: tags.slice(0, 3),
-          summary: parsed.summary || '',
-          success: true,
-        };
-      } catch (err: any) {
-        if (attempts >= maxAttempts) {
-          console.error(`[Groq AI Error with ${modelName}]:`, err.message);
-        }
+      if (!response.ok) {
+        console.warn(`[Groq AI] Model "${modelName}" returned HTTP ${response.status}. Trying next model...`);
+        continue;
       }
+
+      const data = await response.json();
+      const rawOutput = data?.choices?.[0]?.message?.content;
+      if (!rawOutput) continue;
+
+      const parsed = JSON.parse(rawOutput);
+      const tags = Array.isArray(parsed.tags)
+        ? parsed.tags
+            .map((t: string) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, ''))
+            .filter(Boolean)
+        : [];
+
+      console.log(`[Groq AI Success with ${modelName}]:`, tags);
+      return {
+        tags: tags.slice(0, 3),
+        summary: parsed.summary || '',
+        success: true,
+      };
+    } catch (err: any) {
+      console.error(`[Groq AI Error with ${modelName}]:`, err.message);
     }
   }
 
-  return generateLocalAITags(cleanContent);
+  return generateLocalAITags(content);
 }
