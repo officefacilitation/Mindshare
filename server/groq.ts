@@ -7,7 +7,22 @@ export interface AITagResponse {
   error?: string;
 }
 
-function generateLocalAITags(content: string): AITagResponse {
+/**
+ * Strips image markdown, standalone URLs, file extensions, and base64 string noise from content
+ * so the AI LLM only receives clean human thought text (saving tokens and eliminating junk tags).
+ */
+function cleanContentForAI(content: string): string {
+  if (!content) return '';
+  return content
+    .replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/gi, '') // Remove markdown images ![image](url)
+    .replace(/https?:\/\/[^\s]+/gi, '')              // Remove standalone http/https URLs
+    .replace(/data:image\/[a-z]+;base64,[^\s]+/gi, '') // Remove base64 data URIs
+    .trim();
+}
+
+function generateLocalAITags(rawContent: string): AITagResponse {
+  const content = cleanContentForAI(rawContent) || 'Photo attachment note';
+
   const stopWords = new Set([
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'with',
     'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after',
@@ -15,7 +30,8 @@ function generateLocalAITags(content: string): AITagResponse {
     'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all',
     'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no',
     'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't',
-    'can', 'will', 'just', 'don', 'should', 'now', 'this', 'that', 'these', 'those'
+    'can', 'will', 'just', 'don', 'should', 'now', 'this', 'that', 'these', 'those',
+    'image', 'jpg', 'png', 'webp', 'jpeg', 'url', 'http', 'https', 'cloudinary'
   ]);
 
   const words = content
@@ -45,17 +61,28 @@ function generateLocalAITags(content: string): AITagResponse {
 }
 
 export async function generateAITags(
-  content: string,
+  rawContent: string,
   userApiKey?: string
 ): Promise<AITagResponse> {
   const apiKey = userApiKey || process.env.GROQ_API_KEY;
 
-  if (!apiKey) {
-    console.log('[Backend Groq AI] No GROQ_API_KEY set. Using Intelligent Local Fallback.');
-    return generateLocalAITags(content);
+  // Clean raw content so image URLs & markdown image syntax are stripped before calling AI
+  const cleanContent = cleanContentForAI(rawContent);
+
+  if (!cleanContent) {
+    return {
+      tags: ['photo', 'attachment'],
+      summary: 'Image attachment note.',
+      success: true,
+    };
   }
 
-  const prompt = `Analyze this note: "${content.replace(/"/g, '\\"')}".
+  if (!apiKey) {
+    console.log('[Backend Groq AI] No GROQ_API_KEY set. Using Intelligent Local Fallback.');
+    return generateLocalAITags(cleanContent);
+  }
+
+  const prompt = `Analyze this note text: "${cleanContent.replace(/"/g, '\\"')}".
 Return ONLY a valid JSON object strictly matching this schema with no markdown:
 {
   "tags": ["tag1", "tag2", "tag3"],
@@ -81,7 +108,7 @@ Return ONLY a valid JSON object strictly matching this schema with no markdown:
         body: JSON.stringify({
           model: 'llama-3.3-70b-versatile',
           messages: [
-            { role: 'system', content: 'You are an intelligent knowledge base auto-tagger. Output JSON strictly.' },
+            { role: 'system', content: 'You are an intelligent knowledge base auto-tagger. Output JSON strictly. Never output tags about image file extensions, URLs, or image hosting platforms.' },
             { role: 'user', content: prompt }
           ],
           temperature: 0.3,
@@ -102,8 +129,12 @@ Return ONLY a valid JSON object strictly matching this schema with no markdown:
       if (!rawOutput) throw new Error('Empty response');
 
       const parsed = JSON.parse(rawOutput);
+      const invalidAITags = new Set(['image', 'jpg', 'png', 'webp', 'jpeg', 'cloudinary', 'upload', 'http', 'https', 'url']);
+
       const tags = Array.isArray(parsed.tags)
-        ? parsed.tags.map((t: string) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, '')).filter(Boolean)
+        ? parsed.tags
+            .map((t: string) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, ''))
+            .filter((t: string) => Boolean(t) && !invalidAITags.has(t))
         : [];
 
       return {
@@ -113,12 +144,12 @@ Return ONLY a valid JSON object strictly matching this schema with no markdown:
       };
     } catch (err: any) {
       if (attempts >= maxAttempts) {
-        return generateLocalAITags(content);
+        return generateLocalAITags(cleanContent);
       }
       await new Promise((res) => setTimeout(res, delay));
       delay *= 2;
     }
   }
 
-  return generateLocalAITags(content);
+  return generateLocalAITags(cleanContent);
 }
