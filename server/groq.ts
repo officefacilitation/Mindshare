@@ -89,65 +89,77 @@ Return ONLY a valid JSON object strictly matching this schema with no markdown:
   "summary": "1-sentence summary"
 }`;
 
-  let attempts = 0;
-  const maxAttempts = 3;
-  let delay = 1000;
+  // Supported model fallbacks if Groq changes model identifiers
+  const candidateModels = [
+    process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    'llama-3.1-70b-versatile',
+    'llama3-70b-8192',
+    'llama3-8b-8192',
+  ];
 
-  while (attempts < maxAttempts) {
-    try {
-      attempts++;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+  for (const modelName of candidateModels) {
+    let attempts = 0;
+    const maxAttempts = 2;
 
-      const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: 'You are an intelligent knowledge base auto-tagger. Output JSON strictly. Never output tags about image file extensions, URLs, or image hosting platforms.' },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.3,
-          max_tokens: 150,
-          response_format: { type: 'json_object' }
-        }),
-        signal: controller.signal,
-      });
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-      clearTimeout(timeoutId);
+        const response = await fetch(GROQ_API_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: modelName,
+            messages: [
+              { role: 'system', content: 'You are an intelligent knowledge base auto-tagger. Output JSON strictly. Never output tags about image file extensions, URLs, or image hosting platforms.' },
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.3,
+            max_tokens: 150,
+            response_format: { type: 'json_object' }
+          }),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Groq API returned HTTP ${response.status}`);
+        clearTimeout(timeoutId);
+
+        if (response.status === 404) {
+          console.warn(`[Groq AI] Model "${modelName}" returned 404 model_not_found. Retrying next model...`);
+          break; // Break inner loop to try next model in candidateModels
+        }
+
+        if (!response.ok) {
+          throw new Error(`Groq API returned HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const rawOutput = data?.choices?.[0]?.message?.content;
+        if (!rawOutput) throw new Error('Empty response');
+
+        const parsed = JSON.parse(rawOutput);
+        const invalidAITags = new Set(['image', 'jpg', 'png', 'webp', 'jpeg', 'cloudinary', 'upload', 'http', 'https', 'url']);
+
+        const tags = Array.isArray(parsed.tags)
+          ? parsed.tags
+              .map((t: string) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, ''))
+              .filter((t: string) => Boolean(t) && !invalidAITags.has(t))
+          : [];
+
+        return {
+          tags: tags.slice(0, 3),
+          summary: parsed.summary || '',
+          success: true,
+        };
+      } catch (err: any) {
+        if (attempts >= maxAttempts) {
+          console.error(`[Groq AI Error with ${modelName}]:`, err.message);
+        }
       }
-
-      const data = await response.json();
-      const rawOutput = data?.choices?.[0]?.message?.content;
-      if (!rawOutput) throw new Error('Empty response');
-
-      const parsed = JSON.parse(rawOutput);
-      const invalidAITags = new Set(['image', 'jpg', 'png', 'webp', 'jpeg', 'cloudinary', 'upload', 'http', 'https', 'url']);
-
-      const tags = Array.isArray(parsed.tags)
-        ? parsed.tags
-            .map((t: string) => String(t).toLowerCase().replace(/[^a-z0-9_-]/g, ''))
-            .filter((t: string) => Boolean(t) && !invalidAITags.has(t))
-        : [];
-
-      return {
-        tags: tags.slice(0, 3),
-        summary: parsed.summary || '',
-        success: true,
-      };
-    } catch (err: any) {
-      if (attempts >= maxAttempts) {
-        return generateLocalAITags(cleanContent);
-      }
-      await new Promise((res) => setTimeout(res, delay));
-      delay *= 2;
     }
   }
 
