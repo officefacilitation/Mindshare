@@ -1,4 +1,5 @@
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
 
 export interface AITagResponse {
   tags: string[];
@@ -44,6 +45,32 @@ function generateLocalAITags(content: string): AITagResponse {
   };
 }
 
+/**
+ * Dynamically queries https://api.groq.com/openai/v1/models to fetch active models
+ */
+async function getDynamicGroqModels(apiKey: string): Promise<string[]> {
+  try {
+    const res = await fetch(GROQ_MODELS_URL, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data?.data)) {
+        const modelIds = data.data
+          .map((m: any) => m.id)
+          .filter((id: string) => typeof id === 'string' && !id.includes('whisper') && !id.includes('guard'));
+        if (modelIds.length > 0) return modelIds;
+      }
+    }
+  } catch (e) {
+    // Ignore fetch failure and fallback to known production model list
+  }
+  return [];
+}
+
 export async function generateAITags(
   content: string,
   userApiKey?: string
@@ -70,13 +97,19 @@ Return ONLY a valid JSON object strictly matching this schema with no markdown:
   "summary": "1-sentence summary"
 }`;
 
-  // Currently active models on Groq Cloud
-  const candidateModels = [
-    process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
-    'llama-3.3-70b-specdec',
-    'mixtral-8x7b-32768',
-    'gemma2-9b-it',
-  ];
+  // Fetch dynamic models list from GroqCloud API
+  const dynamicModels = await getDynamicGroqModels(apiKey);
+
+  // Combine user override + Groq Official Production Models + dynamic models
+  const candidateModels = Array.from(new Set([
+    process.env.GROQ_MODEL,
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'groq/compound-mini',
+    ...dynamicModels,
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+  ])).filter(Boolean) as string[];
 
   for (const modelName of candidateModels) {
     try {
