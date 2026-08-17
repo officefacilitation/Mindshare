@@ -20,6 +20,7 @@ import { InputBox } from './components/feed/InputBox';
 import { FeedList } from './components/feed/FeedList';
 import { ToastContainer } from './components/ui/Toast';
 import { Login } from './components/auth/Login';
+import { GuideModal } from './components/ui/GuideModal';
 
 export function App() {
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
@@ -35,6 +36,7 @@ export function App() {
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     await syncFromServer();
@@ -207,6 +209,7 @@ export function App() {
         contactCount={contacts.length}
         onToggleMobileSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
         onLogout={handleLogout}
+        onOpenGuide={() => setIsGuideOpen(true)}
       />
 
       <div className="flex-1 max-w-7xl w-full mx-auto flex items-start">
@@ -262,6 +265,7 @@ export function App() {
       </div>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      <GuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
     </div>
   );
 }

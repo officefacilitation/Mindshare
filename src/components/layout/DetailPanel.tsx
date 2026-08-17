@@ -11,6 +11,7 @@ import {
   Check,
   Tag as TagIcon,
   User as UserIcon,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 
@@ -34,6 +35,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [activeLightBoxUrl, setActiveLightBoxUrl] = useState<string | null>(null);
 
   const [newTagInput, setNewTagInput] = useState('');
   const [showAddTag, setShowAddTag] = useState(false);
@@ -47,11 +49,20 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           </div>
           <h3 className="text-sm font-semibold text-ink mb-1">No Thought Selected</h3>
           <p className="text-xs text-ink-muted leading-relaxed max-w-[200px]">
-            Click any note card in the center feed to inspect full content, AI tags, and contacts.
+            Click any note card in the center feed to inspect full content, AI tags, images, and contacts.
           </p>
         </div>
       </aside>
     );
+  }
+
+  // Extract embedded image URLs
+  const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
+  const imageUrls: string[] = [];
+  let m;
+  while ((m = imageRegex.exec(note.content)) !== null) {
+    const url = m[1] || m[2];
+    if (url && !imageUrls.includes(url)) imageUrls.push(url);
   }
 
   const handleStartEdit = () => {
@@ -187,10 +198,37 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
             </div>
           ) : (
             <div className="p-3.5 rounded-lg bg-surface hairline-border text-sm text-ink leading-relaxed whitespace-pre-wrap font-sans select-text">
-              {note.content}
+              {note.content.replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '').trim() || note.content}
             </div>
           )}
         </div>
+
+        {/* Attached Images */}
+        {imageUrls.length > 0 && (
+          <div>
+            <label className="block text-[11px] font-semibold text-ink-muted uppercase tracking-wider mb-2 flex items-center gap-1">
+              <ImageIcon className="w-3 h-3 text-primary" /> Cloudinary Images ({imageUrls.length})
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {imageUrls.map((url, idx) => (
+                <div
+                  key={idx}
+                  onClick={() => setActiveLightBoxUrl(url)}
+                  className="relative group rounded-lg overflow-hidden border hairline-border cursor-pointer aspect-video bg-canvas"
+                >
+                  <img
+                    src={url}
+                    alt={`Attachment ${idx + 1}`}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                  />
+                  <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-medium">
+                    Expand
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Tag Manager */}
         <div>
@@ -316,6 +354,25 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           {panelContent}
         </div>
       </div>
+
+      {/* Image Lightbox Modal */}
+      {activeLightBoxUrl && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="relative max-w-4xl max-h-[90vh] w-full flex flex-col items-center">
+            <button
+              onClick={() => setActiveLightBoxUrl(null)}
+              className="absolute -top-10 right-0 p-2 text-white/80 hover:text-white"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={activeLightBoxUrl}
+              alt="Expanded Preview"
+              className="max-h-[85vh] max-w-full object-contain rounded-lg shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       <Modal

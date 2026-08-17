@@ -5,6 +5,7 @@ import { supabase, isSupabaseConfigured, DEMO_USER_ID, ensureDemoUserExists } fr
 import { generateAITags } from './groq.js';
 import { parseNoteContent } from '../src/lib/parser.ts';
 import { startAIWorker } from './aiWorker.js';
+import { uploadToCloudinary, deleteFromCloudinary } from './cloudinary.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -16,7 +17,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // Path normalizer middleware: accepts requests with or without /api prefix
 app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -278,6 +279,21 @@ app.post('/api/contacts', async (req: Request, res: Response) => {
   };
 
   res.status(201).json({ contact, success: true });
+});
+
+// Image Upload Endpoint (Cloudinary integration)
+app.post('/api/upload', async (req: Request, res: Response) => {
+  const { image } = req.body || {};
+  if (!image || typeof image !== 'string') {
+    return res.status(400).json({ error: 'Image data (base64 or URL) is required' });
+  }
+
+  const result = await uploadToCloudinary(image);
+  if (!result.success && !result.url) {
+    return res.status(500).json({ error: result.error || 'Failed to upload image' });
+  }
+
+  res.json({ url: result.secure_url || result.url, success: true });
 });
 
 // Scalable Paginated Notes Endpoint (Handles 10,000+ Notes Scale)
@@ -546,10 +562,33 @@ app.put('/api/notes/:id', async (req: Request, res: Response) => {
 });
 
 // Delete Note
+// Delete Note & Cloudinary Images
 app.delete('/api/notes/:id', async (req: Request, res: Response) => {
   if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
 
   const { id } = req.params;
+
+  // 1. Fetch note content to extract attached Cloudinary image URLs
+  const { data: noteRow } = await supabase
+    .from('notes')
+    .select('content')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (noteRow?.content) {
+    const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
+    let match;
+    while ((match = imageRegex.exec(noteRow.content)) !== null) {
+      const imageUrl = match[1] || match[2];
+      if (imageUrl) {
+        deleteFromCloudinary(imageUrl).catch((err) =>
+          console.error('[Cloudinary Delete Error]:', err.message)
+        );
+      }
+    }
+  }
+
+  // 2. Delete Note (PostgreSQL ON DELETE CASCADE automatically deletes note_tags, mentions, and ai_jobs)
   const { error, count } = await supabase.from('notes').delete({ count: 'exact' }).eq('id', id);
 
   if (error) {

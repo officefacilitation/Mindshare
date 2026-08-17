@@ -160,4 +160,17 @@ export const api = {
       return { error: 'Network error connecting to backend API' };
     }
   },
+
+  async uploadImage(base64Image: string): Promise<{ url?: string; error?: string }> {
+    try {
+      const { ok, data } = await request('/upload', {
+        method: 'POST',
+        body: JSON.stringify({ image: base64Image }),
+      });
+      if (!ok) return { error: data?.error || 'Failed to upload image' };
+      return { url: data.url };
+    } catch (e) {
+      return { error: 'Network error uploading image' };
+    }
+  },
 };
