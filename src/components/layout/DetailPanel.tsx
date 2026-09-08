@@ -185,8 +185,9 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
         </div>
         <button
           onClick={onClose}
-          className="p-1 rounded-lg text-ink-muted hover:text-ink hover:bg-hairline/40 transition-colors cursor-pointer"
+          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-ink-muted hover:text-ink hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
           title="Close Inspector"
+          aria-label="Close Inspector"
         >
           <X className="w-4 h-4" />
         </button>
@@ -238,7 +239,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                className="w-full h-36 p-3 text-xs sm:text-sm bg-canvas rounded-xl hairline-border text-ink focus:outline-none focus:border-primary resize-none font-sans"
+                className="w-full h-36 p-3 text-base sm:text-sm bg-canvas rounded-xl hairline-border text-ink focus:outline-none focus:border-primary resize-none font-sans"
               />
               <div className="flex justify-end gap-2">
                 <button
@@ -444,25 +445,32 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
           onClick={onClose}
         />
-        <div className="relative w-84 max-w-[90vw] sm:max-w-[85vw] h-full bg-surface shadow-2xl z-50 animate-slide-left">
+        <div className="relative w-full max-w-[92vw] sm:w-84 sm:max-w-[85vw] h-full bg-surface shadow-2xl z-50 animate-slide-left">
           {panelContent}
         </div>
       </div>
 
       {/* Image Lightbox Modal */}
       {activeLightBoxUrl && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="relative max-w-4xl max-h-[90vh] w-full flex flex-col items-center">
+        <div
+          className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setActiveLightBoxUrl(null)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] w-full flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
             <button
               onClick={() => setActiveLightBoxUrl(null)}
-              className="absolute -top-10 right-0 p-2 text-white/80 hover:text-white cursor-pointer"
+              className="absolute -top-11 right-0 min-h-[40px] min-w-[40px] flex items-center justify-center p-2 text-white/90 hover:text-white bg-black/40 rounded-full cursor-pointer"
+              aria-label="Close image preview"
             >
-              <X className="w-6 h-6" />
+              <X className="w-5 h-5" />
             </button>
             <img
               src={activeLightBoxUrl}
               alt="Expanded Preview"
-              className="max-h-[85vh] max-w-full object-contain rounded-2xl shadow-2xl"
+              className="max-h-[80vh] max-w-full object-contain rounded-2xl shadow-2xl"
             />
           </div>
         </div>

@@ -29,6 +29,7 @@ import { ToastContainer } from './components/ui/Toast';
 import { Login } from './components/auth/Login';
 import { UsernameModal } from './components/auth/UsernameModal';
 import { GuideModal } from './components/ui/GuideModal';
+import { Inbox, Bell, Sparkles } from 'lucide-react';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -308,7 +309,62 @@ export function App() {
         />
 
         {/* Center Main Feed (600px max) */}
-        <main className="flex-1 min-w-0 px-4 sm:px-6 py-6 max-w-2xl mx-auto">
+        <main className="flex-1 min-w-0 px-3.5 sm:px-6 py-4 sm:py-6 max-w-2xl mx-auto">
+          {/* Mobile Quick Feed Switcher Tabs (Visible only on mobile/tablet < lg) */}
+          <div className="lg:hidden mb-4 grid grid-cols-3 gap-1.5 p-1 bg-surface rounded-2xl hairline-border shadow-subtle select-none">
+            <button
+              type="button"
+              onClick={() => handleSelectFilter('all')}
+              className={`flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer ${
+                activeFilter.type === 'all' && !searchQuery
+                  ? 'bg-primary text-white font-semibold shadow-subtle'
+                  : 'text-ink-muted hover:text-ink active:bg-hairline/50'
+              }`}
+            >
+              <Inbox className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">My ({myNotesCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectFilter('tagged_me')}
+              className={`flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer relative ${
+                activeFilter.type === 'tagged_me'
+                  ? 'bg-primary text-white font-semibold shadow-subtle'
+                  : 'text-ink-muted hover:text-ink active:bg-hairline/50'
+              }`}
+            >
+              <Bell className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Tagged</span>
+              {mentionsCount > 0 && (
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold leading-none shrink-0 ${
+                    activeFilter.type === 'tagged_me'
+                      ? 'bg-white text-primary'
+                      : hasUnreadMentions
+                      ? 'bg-primary text-white animate-pulse'
+                      : 'bg-canvas text-ink-muted hairline-border'
+                  }`}
+                >
+                  {mentionsCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectFilter('untagged')}
+              className={`flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer ${
+                activeFilter.type === 'untagged'
+                  ? 'bg-primary text-white font-semibold shadow-subtle'
+                  : 'text-ink-muted hover:text-ink active:bg-hairline/50'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">Untagged ({untaggedCount})</span>
+            </button>
+          </div>
+
           {activeFilter.type !== 'tagged_me' && (
             <InputBox
               onSaveNote={handleSaveNote}

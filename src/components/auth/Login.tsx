@@ -141,7 +141,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="e.g. Sarah Connor"
-                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
+                    className="w-full pl-9 pr-3 py-2.5 text-base sm:text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
                   />
                 </div>
               </div>
@@ -160,7 +160,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="alex@company.com"
                   autoComplete="email"
-                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
+                  className="w-full pl-9 pr-3 py-2.5 text-base sm:text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
                 />
               </div>
             </div>
@@ -179,14 +179,15 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   autoComplete={isSignUp ? 'new-password' : 'current-password'}
-                  className="w-full pl-9 pr-9 py-2 text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
+                  className="w-full pl-9 pr-10 py-2.5 text-base sm:text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-subtle hover:text-ink p-0.5"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 min-h-[36px] min-w-[36px] flex items-center justify-center text-ink-subtle hover:text-ink rounded-lg cursor-pointer"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
@@ -202,7 +203,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
             <button
               type="submit"
               disabled={isSubmitting || !email.trim() || !password}
-              className="mt-2 w-full py-2.5 px-4 text-xs font-semibold text-white bg-primary hover:bg-primary-hover active:scale-[0.99] rounded-xl shadow-subtle transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              className="mt-2 w-full py-2.5 min-h-[42px] px-4 text-xs font-semibold text-white bg-primary hover:bg-primary-hover active:scale-[0.98] rounded-xl shadow-subtle transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               {isSubmitting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />

@@ -72,7 +72,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
     <>
       <article
         onClick={() => onSelect(note)}
-        className={`group bg-surface rounded-2xl hairline-border p-4.5 mb-3.5 transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-surface/90 shadow-subtle ${
+        className={`group bg-surface rounded-2xl hairline-border p-3.5 sm:p-4.5 mb-3.5 transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-surface/90 shadow-subtle ${
           isSelected ? 'border-primary ring-1 ring-primary/20 bg-primary-light/10' : ''
         }`}
       >
@@ -103,7 +103,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
 
         {/* Main Text Content */}
         {cleanedText && (
-          <div className="text-sm font-sans text-ink leading-relaxed whitespace-pre-wrap">
+          <div className="text-sm font-sans text-ink leading-relaxed whitespace-pre-wrap break-words">
             {displayContent}
             {shouldTruncate && (
               <button
@@ -171,18 +171,18 @@ export const NoteCard: React.FC<NoteCardProps> = ({
             </div>
             {imageUrls.length > 0 && (
               <span className="flex items-center gap-1 text-ink-subtle text-[11px]">
-                <ImageIcon className="w-3 h-3 text-primary" /> {imageUrls.length} image{imageUrls.length > 1 ? 's' : ''}
+                <ImageIcon className="w-3 h-3 text-primary" /> {imageUrls.length}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 onSelect(note);
               }}
-              className="p-1 text-ink-muted hover:text-primary transition-colors cursor-pointer"
+              className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-ink-muted hover:text-primary hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
               title="Inspect Note"
             >
               <Edit3 className="w-3.5 h-3.5" />
@@ -193,13 +193,13 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                   e.stopPropagation();
                   setIsConfirmDeleteOpen(true);
                 }}
-                className="p-1 text-ink-muted hover:text-status-error transition-colors cursor-pointer"
+                className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-ink-muted hover:text-status-error hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
                 title="Delete Note"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             )}
-            <ChevronRight className="w-3.5 h-3.5 text-ink-subtle" />
+            <ChevronRight className="w-3.5 h-3.5 text-ink-subtle ml-0.5" />
           </div>
         </div>
       </article>

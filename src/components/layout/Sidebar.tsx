@@ -61,10 +61,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Mobile Drawer Header */}
       {isOpenMobile && (
         <div className="flex items-center justify-between pb-3 mb-2 hairline-b lg:hidden">
-          <span className="font-semibold text-xs uppercase tracking-wider text-ink">Navigation</span>
+          <span className="font-semibold text-xs uppercase tracking-wider text-ink">Navigation Menu</span>
           <button
             onClick={onCloseMobile}
-            className="p-1 rounded-md text-ink-muted hover:text-ink hover:bg-hairline/50 cursor-pointer"
+            className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-ink-muted hover:text-ink hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
+            aria-label="Close navigation"
           >
             <X className="w-4 h-4" />
           </button>
@@ -272,11 +273,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {onOpenEditProfile && (
                   <button
                     type="button"
-                    onClick={onOpenEditProfile}
-                    className="p-1 text-primary hover:bg-surface rounded-md transition-colors cursor-pointer"
+                    onClick={() => {
+                      if (onCloseMobile) onCloseMobile();
+                      onOpenEditProfile();
+                    }}
+                    className="min-h-[32px] min-w-[32px] flex items-center justify-center text-primary hover:bg-surface active:bg-hairline rounded-lg transition-colors cursor-pointer"
                     title="Edit your username handle"
                   >
-                    <Edit3 className="w-3 h-3" />
+                    <Edit3 className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>

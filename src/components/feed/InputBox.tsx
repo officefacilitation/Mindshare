@@ -278,6 +278,23 @@ export const InputBox: React.FC<InputBoxProps> = ({
     )
     .slice(0, 5);
 
+  // Helper to insert trigger character from mobile buttons
+  const handleInsertTrigger = (char: '#' | '@') => {
+    const separator = content.endsWith(' ') || content.length === 0 ? '' : ' ';
+    const newContent = `${content}${separator}${char}`;
+    setContent(newContent);
+    setAutocompleteMode(char === '#' ? 'tag' : 'mention');
+    setAutocompleteQuery('');
+    setTriggerIndex(newContent.length - 1);
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.selectionStart = newContent.length;
+        textareaRef.current.selectionEnd = newContent.length;
+      }
+    }, 50);
+  };
+
   return (
     <div className="relative mb-6">
       <input
@@ -298,7 +315,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
           isFocused ? 'border-primary ring-1 ring-primary/20' : ''
         } ${isDraggingOver ? 'border-primary bg-primary-light/10 ring-2 ring-primary/40' : ''}`}
       >
-        <div className="p-4 sm:p-4.5">
+        <div className="p-3.5 sm:p-4.5">
           <textarea
             ref={textareaRef}
             value={content}
@@ -308,7 +325,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
             onFocus={() => setIsFocused(true)}
             onBlur={() => setTimeout(() => setIsFocused(false), 200)}
             placeholder="Capture a thought... type #tag, tag teammates with @name, paste or drag images..."
-            className="w-full min-h-[68px] max-h-[360px] bg-transparent text-ink placeholder:text-ink-subtle text-sm sm:text-base font-sans leading-relaxed focus:outline-none resize-none"
+            className="w-full min-h-[68px] max-h-[360px] bg-transparent text-ink placeholder:text-ink-subtle text-base sm:text-sm font-sans leading-relaxed focus:outline-none resize-none"
             rows={2}
           />
 
@@ -387,22 +404,35 @@ export const InputBox: React.FC<InputBoxProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="px-3 sm:px-4 py-2.5 bg-canvas/40 hairline-t rounded-b-2xl flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex flex-wrap items-center gap-2.5 text-xs text-ink-muted">
-            {/* Quick helper buttons */}
-            <span className="flex items-center gap-1 text-[11px] text-ink-subtle">
-              <Hash className="w-3 h-3 text-primary" /> #topic
-            </span>
-            <span className="flex items-center gap-1 text-[11px] text-ink-subtle">
-              <AtSign className="w-3 h-3 text-mention-text" /> @teammate
-            </span>
+        <div className="px-3 sm:px-4 py-2.5 bg-canvas/40 hairline-t rounded-b-2xl flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+            {/* Quick helper touch buttons - insert symbol & open autocomplete */}
+            <button
+              type="button"
+              onClick={() => handleInsertTrigger('#')}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-canvas hover:bg-surface active:bg-hairline hairline-border text-[11px] text-ink hover:text-primary font-medium transition-colors cursor-pointer"
+              title="Add a private #tag"
+            >
+              <Hash className="w-3 h-3 text-primary" />
+              <span>tag</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleInsertTrigger('@')}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg bg-canvas hover:bg-surface active:bg-hairline hairline-border text-[11px] text-ink hover:text-mention-text font-medium transition-colors cursor-pointer"
+              title="Mention a teammate"
+            >
+              <AtSign className="w-3 h-3 text-mention-text" />
+              <span>mention</span>
+            </button>
 
             {/* On-Demand AI Tag Suggestions Button */}
             <button
               type="button"
               onClick={handleRequestAISuggestions}
               disabled={isSuggestingTags || !content.trim()}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-primary bg-primary-light/60 hover:bg-primary-light rounded-lg hairline-border transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold text-primary bg-primary-light/60 hover:bg-primary-light active:scale-95 rounded-lg hairline-border transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               title="Analyze text and suggest 3 smart tags"
             >
               {isSuggestingTags ? (
@@ -410,32 +440,33 @@ export const InputBox: React.FC<InputBoxProps> = ({
               ) : (
                 <Sparkles className="w-3 h-3" />
               )}
-              <span>Suggest Tags</span>
+              <span>Suggest</span>
             </button>
 
             {/* Attach image button */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1 text-xs text-ink-muted hover:text-ink font-medium cursor-pointer"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-surface text-xs text-ink-muted hover:text-ink font-medium transition-colors cursor-pointer"
               title="Add images"
             >
-              <ImageIcon className="w-3.5 h-3.5" /> + Image
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span>Image</span>
             </button>
 
             <span className="hidden md:inline-block text-[11px] text-ink-subtle">
-              <kbd className="px-1 py-0.5 bg-surface hairline-border rounded text-[10px] font-mono">Ctrl+Enter</kbd> to save
+              <kbd className="px-1 py-0.5 bg-surface hairline-border rounded text-[10px] font-mono">Ctrl+Enter</kbd>
             </span>
           </div>
 
-          <div className="flex items-center gap-2.5 ml-auto sm:ml-0">
-            <span className={`text-xs ${content.length > 9000 ? 'text-status-error font-bold' : 'text-ink-subtle'}`}>
+          <div className="flex items-center gap-2 ml-auto">
+            <span className={`text-[11px] sm:text-xs ${content.length > 9000 ? 'text-status-error font-bold' : 'text-ink-subtle'}`}>
               {content.length}/10,000
             </span>
             <button
               type="submit"
               disabled={(!content.trim() && attachedImages.length === 0) || isSubmitting}
-              className="px-4 py-1.5 text-xs font-semibold text-white bg-primary hover:bg-primary-hover active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-subtle transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 sm:px-4 py-1.5 min-h-[34px] text-xs font-semibold text-white bg-primary hover:bg-primary-hover active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-subtle transition-all flex items-center gap-1.5 cursor-pointer"
             >
               {isSubmitting ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -461,16 +492,16 @@ export const InputBox: React.FC<InputBoxProps> = ({
               {filteredTagSuggestions.length === 0 ? (
                 <div
                   onClick={() => handleSelectAutocomplete(autocompleteQuery)}
-                  className="px-3 py-2 text-xs text-primary hover:bg-primary-light cursor-pointer flex items-center gap-1"
+                  className="px-3.5 py-2.5 min-h-[38px] text-xs text-primary hover:bg-primary-light active:bg-primary-light cursor-pointer flex items-center gap-1.5"
                 >
-                  <Hash className="w-3 h-3" /> Create new tag #{autocompleteQuery}
+                  <Hash className="w-3.5 h-3.5" /> Create new tag #{autocompleteQuery}
                 </div>
               ) : (
                 filteredTagSuggestions.map((t) => (
                   <div
                     key={t.id}
                     onClick={() => handleSelectAutocomplete(t.name)}
-                    className="px-3 py-1.5 text-xs text-ink hover:bg-canvas cursor-pointer flex items-center justify-between"
+                    className="px-3.5 py-2 min-h-[36px] text-xs text-ink hover:bg-canvas active:bg-hairline cursor-pointer flex items-center justify-between"
                   >
                     <span className="font-medium">#{t.name}</span>
                     <span className="text-[10px] text-ink-subtle">{t.count || 0} notes</span>
@@ -483,7 +514,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
           {autocompleteMode === 'mention' && (
             <div>
               {filteredTeammateSuggestions.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-ink-subtle italic">
+                <div className="px-3.5 py-2.5 min-h-[38px] text-xs text-ink-subtle italic">
                   No teammate handle matching "@{autocompleteQuery}".
                 </div>
               ) : (
@@ -491,10 +522,10 @@ export const InputBox: React.FC<InputBoxProps> = ({
                   <div
                     key={u.id}
                     onClick={() => handleSelectAutocomplete(u.username || '')}
-                    className="px-3 py-1.5 text-xs text-ink hover:bg-canvas cursor-pointer flex items-center justify-between"
+                    className="px-3.5 py-2 min-h-[36px] text-xs text-ink hover:bg-canvas active:bg-hairline cursor-pointer flex items-center justify-between"
                   >
                     <span className="font-medium flex items-center gap-1.5">
-                      <AtSign className="w-3 h-3 text-mention-text" /> @{u.username}
+                      <AtSign className="w-3.5 h-3.5 text-mention-text" /> @{u.username}
                     </span>
                     <span className="text-[10px] text-ink-subtle">{u.full_name?.split(' ')[0] || ''}</span>
                   </div>

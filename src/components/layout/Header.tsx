@@ -36,11 +36,11 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="sticky top-0 z-30 bg-surface/90 backdrop-blur-md hairline-b px-3 sm:px-6 py-2.5 transition-colors select-none">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
         {/* Brand & Mobile Menu Toggle */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <button
             onClick={onToggleMobileSidebar}
-            className="lg:hidden p-1.5 rounded-lg text-ink-muted hover:text-ink hover:bg-canvas transition-colors cursor-pointer"
-            aria-label="Toggle navigation"
+            className="lg:hidden min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl text-ink-muted hover:text-ink hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
+            aria-label="Toggle navigation drawer"
           >
             <Menu className="w-5 h-5" />
           </button>
@@ -61,7 +61,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Stats & Current User Account */}
-        <div className="flex items-center gap-2 sm:gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3">
           <div className="hidden md:flex items-center gap-3 text-xs text-ink-muted font-medium bg-canvas px-3 py-1.5 rounded-xl hairline-border">
             <span>
               <strong className="text-ink font-semibold">{noteCount}</strong> Thoughts
@@ -82,7 +82,7 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 type="button"
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-canvas hover:bg-primary-light/40 hairline-border text-xs transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-2.5 min-h-[36px] rounded-xl bg-canvas hover:bg-primary-light/40 hairline-border text-xs transition-colors cursor-pointer active:scale-95"
                 title="View your Profile & ID"
               >
                 {currentUser.avatar_url ? (
@@ -96,8 +96,8 @@ export const Header: React.FC<HeaderProps> = ({
                     {initials}
                   </div>
                 )}
-                <span className="font-mono text-primary font-semibold hidden sm:inline">
-                  @{currentUser.username || 'set_username'}
+                <span className="font-mono text-primary font-semibold max-w-[90px] sm:max-w-none truncate">
+                  @{currentUser.username || 'user'}
                 </span>
                 <span className="w-1.5 h-1.5 rounded-full bg-status-success shrink-0" title="Online" />
               </button>
@@ -106,10 +106,10 @@ export const Header: React.FC<HeaderProps> = ({
               {isProfileOpen && (
                 <>
                   <div
-                    className="fixed inset-0 z-40"
+                    className="fixed inset-0 z-40 bg-black/20 lg:bg-transparent"
                     onClick={() => setIsProfileOpen(false)}
                   />
-                  <div className="absolute right-0 mt-2 z-50 w-72 bg-surface rounded-2xl hairline-border shadow-modal p-4 animate-slide-up text-ink">
+                  <div className="absolute right-0 mt-2 z-50 w-72 max-w-[calc(100vw-24px)] bg-surface rounded-2xl hairline-border shadow-modal p-4 animate-slide-up text-ink">
                     <div className="flex items-start justify-between pb-3 hairline-b">
                       <div className="flex items-center gap-2.5">
                         {currentUser.avatar_url ? (
@@ -159,7 +159,7 @@ export const Header: React.FC<HeaderProps> = ({
                           setIsProfileOpen(false);
                           onOpenEditProfile();
                         }}
-                        className="w-full py-1.5 px-3 text-xs font-semibold text-primary bg-primary-light/50 hover:bg-primary-light rounded-xl hairline-border flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        className="w-full py-2 px-3 text-xs font-semibold text-primary bg-primary-light/50 hover:bg-primary-light active:scale-98 rounded-xl hairline-border flex items-center justify-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
                       >
                         <Edit3 className="w-3.5 h-3.5" /> Edit Profile & Handle
                       </button>
@@ -170,7 +170,7 @@ export const Header: React.FC<HeaderProps> = ({
                           setIsProfileOpen(false);
                           onLogout();
                         }}
-                        className="w-full py-1.5 px-3 text-xs font-semibold text-status-error hover:bg-status-error/10 rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        className="w-full py-2 px-3 text-xs font-semibold text-status-error hover:bg-status-error/10 active:scale-98 rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
                       >
                         <LogOut className="w-3.5 h-3.5" /> Sign Out
                       </button>
@@ -183,19 +183,19 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={onOpenGuide}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-ink bg-canvas hover:bg-hairline/40 rounded-xl hairline-border transition-all cursor-pointer"
+            className="flex items-center justify-center gap-1.5 min-h-[36px] min-w-[36px] px-2 sm:px-3 text-xs font-medium text-ink-muted hover:text-ink bg-canvas hover:bg-hairline/40 active:scale-95 rounded-xl hairline-border transition-all cursor-pointer"
             title="User Guide & Help"
           >
-            <HelpCircle className="w-3.5 h-3.5 text-primary" />
+            <HelpCircle className="w-3.5 h-3.5 text-primary shrink-0" />
             <span className="hidden sm:inline">Guide</span>
           </button>
 
           <button
             onClick={onLogout}
-            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-ink-muted hover:text-status-error bg-canvas hover:bg-hairline/40 rounded-xl hairline-border transition-all cursor-pointer"
-            title="Log Out"
+            className="flex items-center justify-center gap-1.5 min-h-[36px] min-w-[36px] px-2 sm:px-3 text-xs font-medium text-ink-muted hover:text-status-error bg-canvas hover:bg-hairline/40 active:scale-95 rounded-xl hairline-border transition-all cursor-pointer"
+            title="Sign Out"
           >
-            <LogOut className="w-3.5 h-3.5" />
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
             <span className="hidden sm:inline">Sign Out</span>
           </button>
         </div>

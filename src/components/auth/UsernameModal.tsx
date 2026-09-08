@@ -118,7 +118,7 @@ export const UsernameModal: React.FC<UsernameModalProps> = ({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Sarah Connor"
-            className="w-full px-3 py-2 text-sm rounded-lg hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
+            className="w-full px-3 py-2.5 text-base sm:text-sm rounded-lg hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
           />
         </div>
 
@@ -151,7 +151,7 @@ export const UsernameModal: React.FC<UsernameModalProps> = ({
               value={handle}
               onChange={(e) => handleInputChange(e.target.value)}
               placeholder="e.g. sarah"
-              className={`w-full pl-9 pr-3 py-2 text-sm rounded-lg hairline-border bg-canvas text-ink font-mono placeholder:text-ink-subtle focus:outline-none transition-colors ${
+              className={`w-full pl-9 pr-3 py-2.5 text-base sm:text-sm rounded-lg hairline-border bg-canvas text-ink font-mono placeholder:text-ink-subtle focus:outline-none transition-colors ${
                 isTakenLocally
                   ? 'border-status-error focus:border-status-error'
                   : 'focus:border-primary'
