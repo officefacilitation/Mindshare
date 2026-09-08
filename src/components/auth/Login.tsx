@@ -22,7 +22,17 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
     setError('');
     const res = await api.signInWithGoogle();
     if (res.error) {
-      setError(res.error);
+      if (
+        res.error.includes('provider is not enabled') ||
+        res.error.includes('validation_failed') ||
+        res.error.includes('Unsupported provider')
+      ) {
+        setError(
+          'Google login is not enabled in your Supabase project yet. You can sign in or register with Email/Password below right now, or enable Google in your Supabase Dashboard.'
+        );
+      } else {
+        setError(res.error);
+      }
       setIsGoogleLoading(false);
     }
   };
