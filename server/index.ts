@@ -478,38 +478,54 @@ app.get('/api/notes/mentions-count', async (req: AuthRequest, res: Response) => 
       .eq('id', req.userId)
       .maybeSingle();
 
-    // 2. Fetch all tagged notes for this user that are not deleted
-    const { data: taggedNotes, error } = await db
+    // 2. Fetch all mention rows for this user
+    const { data: mentionRows, error: mentionErr } = await db
       .from('mentions')
-      .select('note_id, notes!inner(created_at, deleted_at)')
-      .eq('user_id', req.userId)
-      .is('notes.deleted_at', null);
+      .select('note_id')
+      .eq('user_id', req.userId);
 
-    if (error) {
-      console.warn('[API] mentions query error:', error.message);
-      // Fallback simple count if relation error
-      const { count } = await db.from('mentions').select('note_id', { count: 'exact', head: true }).eq('user_id', req.userId);
-      return res.json({ count: count || 0, unreadCount: 0, hasUnread: false });
+    if (mentionErr) {
+      console.warn('[API] mentions query error:', mentionErr.message);
+      return res.json({ count: 0, unreadCount: 0, hasUnread: false });
     }
 
-    const totalCount = taggedNotes?.length || 0;
-    let unreadCount = 0;
-
-    if (userProfile?.mentions_last_seen_at) {
-      const lastSeenTime = new Date(userProfile.mentions_last_seen_at).getTime();
-      unreadCount = (taggedNotes || []).filter((item: any) => {
-        const createdAt = item.notes?.created_at ? new Date(item.notes.created_at).getTime() : 0;
-        return createdAt > lastSeenTime;
-      }).length;
-    } else {
-      unreadCount = totalCount;
+    const noteIds = (mentionRows || []).map((m: any) => m.note_id);
+    if (noteIds.length === 0) {
+      return res.json({
+        count: 0,
+        unreadCount: 0,
+        hasUnread: false,
+        mentions_last_seen_at: userProfile?.mentions_last_seen_at || null,
+      });
     }
+
+    // 3. Fetch notes created by colleagues that are not deleted (exclude self-mentions)
+    const { data: notes, error: notesErr } = await db
+      .from('notes')
+      .select('id, created_at')
+      .in('id', noteIds)
+      .neq('user_id', req.userId)
+      .is('deleted_at', null);
+
+    if (notesErr) {
+      console.warn('[API] notes query error for mentions:', notesErr.message);
+      return res.json({ count: noteIds.length, unreadCount: 0, hasUnread: false });
+    }
+
+    const totalCount = notes?.length || 0;
+    const lastSeen = userProfile?.mentions_last_seen_at;
+    const lastSeenTime = lastSeen ? new Date(lastSeen).getTime() : 0;
+
+    const unreadCount = (notes || []).filter((n: any) => {
+      const noteTime = new Date(n.created_at).getTime();
+      return noteTime > lastSeenTime;
+    }).length;
 
     res.json({
       count: totalCount,
       unreadCount,
       hasUnread: unreadCount > 0,
-      mentions_last_seen_at: userProfile?.mentions_last_seen_at || null,
+      mentions_last_seen_at: lastSeen || null,
     });
   } catch (err: any) {
     console.warn('[API] mentions-count error:', err.message);

@@ -146,14 +146,20 @@ export function App() {
     return () => unsubscribe();
   }, [selectedNote, currentUser?.id]);
 
-  // Periodic poll & focus re-sync (every 15 seconds)
+  // Periodic poll, focus re-sync, and visibilitychange (for mobile foreground return)
   useEffect(() => {
     if (!isAuthed) return;
-    const onFocus = () => refresh();
-    window.addEventListener('focus', onFocus);
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'visible') {
+        refresh();
+      }
+    };
+    window.addEventListener('focus', onFocusOrVisible);
+    document.addEventListener('visibilitychange', onFocusOrVisible);
     const interval = setInterval(() => refresh(), 15000);
     return () => {
-      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('focus', onFocusOrVisible);
+      document.removeEventListener('visibilitychange', onFocusOrVisible);
       clearInterval(interval);
     };
   }, [isAuthed, refresh]);
