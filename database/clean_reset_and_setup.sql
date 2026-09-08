@@ -37,13 +37,27 @@ CREATE TABLE public.users (
 -- 5. Auto User Profile Trigger on Signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  base_username TEXT;
+  final_username TEXT;
 BEGIN
+  base_username := LOWER(REGEXP_REPLACE(split_part(NEW.email, '@', 1), '[^a-zA-Z0-9_]', '', 'g'));
+  IF length(base_username) < 2 THEN
+    base_username := 'user';
+  END IF;
+  final_username := base_username;
+
+  -- Ensure uniqueness if another user has the same handle
+  IF EXISTS (SELECT 1 FROM public.users WHERE username = final_username AND id != NEW.id) THEN
+    final_username := base_username || '_' || substr(NEW.id::text, 1, 4);
+  END IF;
+
   INSERT INTO public.users (id, email, full_name, username, avatar_url, status)
   VALUES (
     NEW.id,
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
-    LOWER(REGEXP_REPLACE(split_part(NEW.email, '@', 1), '[^a-zA-Z0-9_]', '', 'g')),
+    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', base_username),
+    final_username,
     NEW.raw_user_meta_data->>'avatar_url',
     'active'
   )
@@ -60,13 +74,13 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT OR UPDATE ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Auto backfill any users already in auth.users
+-- Auto backfill any users already in auth.users safely
 INSERT INTO public.users (id, email, full_name, username, avatar_url, status)
 SELECT 
   id,
   email,
   COALESCE(raw_user_meta_data->>'full_name', raw_user_meta_data->>'name', split_part(email, '@', 1)),
-  LOWER(REGEXP_REPLACE(split_part(email, '@', 1), '[^a-zA-Z0-9_]', '', 'g')),
+  LOWER(REGEXP_REPLACE(split_part(email, '@', 1), '[^a-zA-Z0-9_]', '', 'g')) || '_' || substr(id::text, 1, 4),
   raw_user_meta_data->>'avatar_url',
   'active'
 FROM auth.users
