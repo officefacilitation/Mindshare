@@ -74,8 +74,10 @@ export function App() {
     const res = await api.getMe();
     if (res.user) {
       setCurrentUser(res.user);
-      // Only prompt if user has no username set in database
-      if (!res.user.username || res.user.username.trim() === '') {
+      // Prompt user to choose their handle if:
+      // 1) is_handle_set is explicitly false (newly created account from Google/Email)
+      // 2) OR user has no username set
+      if (res.user.is_handle_set === false || !res.user.username || res.user.username.trim() === '') {
         setIsUsernameModalOpen(true);
       }
     }
@@ -330,6 +332,7 @@ export function App() {
         currentUserId={currentUser?.id}
         currentName={currentUser?.full_name || ''}
         currentUsername={currentUser?.username || ''}
+        isInitialSetup={currentUser?.is_handle_set === false}
         teammates={teammates}
         onClose={() => setIsUsernameModalOpen(false)}
         onSaveUsername={handleSaveUsername}

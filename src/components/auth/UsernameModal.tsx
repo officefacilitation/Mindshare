@@ -8,6 +8,7 @@ interface UsernameModalProps {
   currentUserId?: string;
   currentName?: string;
   currentUsername?: string;
+  isInitialSetup?: boolean;
   teammates?: User[];
   onClose: () => void;
   onSaveUsername: (username: string, fullName?: string) => Promise<{ error?: string; success?: boolean }>;
@@ -18,6 +19,7 @@ export const UsernameModal: React.FC<UsernameModalProps> = ({
   currentUserId,
   currentName = '',
   currentUsername = '',
+  isInitialSetup = false,
   teammates = [],
   onClose,
   onSaveUsername,
@@ -36,7 +38,7 @@ export const UsernameModal: React.FC<UsernameModalProps> = ({
     }
   }, [isOpen, currentUsername, currentName]);
 
-  const isEditing = Boolean(currentUsername && currentUsername.trim().length > 0);
+  const isEditing = !isInitialSetup && Boolean(currentUsername && currentUsername.trim().length > 0);
   const cleanHandle = handle.toLowerCase().replace(/[^a-z0-9_]/g, '');
 
   // Check if handle is taken by any other teammate in workspace

@@ -108,11 +108,22 @@ app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
   const db = getDb(req);
   if (!db || !req.userId) return res.status(500).json({ error: 'Server error' });
 
-  const { data: userProfile, error } = await db
+  let { data: userProfile, error } = await db
     .from('users')
-    .select('id, email, full_name, username, avatar_url, status')
+    .select('id, email, full_name, username, avatar_url, status, is_handle_set')
     .eq('id', req.userId)
     .maybeSingle();
+
+  // Graceful fallback if is_handle_set column is not yet migrated in DB
+  if (error && error.message?.includes('is_handle_set')) {
+    const fallbackRes = await db
+      .from('users')
+      .select('id, email, full_name, username, avatar_url, status')
+      .eq('id', req.userId)
+      .maybeSingle();
+    userProfile = fallbackRes.data;
+    error = fallbackRes.error;
+  }
 
   if (error) {
     return res.status(500).json({ error: error.message });
@@ -137,8 +148,9 @@ app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
       username: fallbackUsername,
       avatar_url: avatarUrl,
       status: 'active',
+      is_handle_set: false,
     })
-    .select('id, email, full_name, username, avatar_url, status')
+    .select('id, email, full_name, username, avatar_url, status, is_handle_set')
     .single();
 
   if (insertErr) {
@@ -174,17 +186,31 @@ app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
 
   const updates: any = {
     username: cleanUsername,
+    is_handle_set: true,
     updated_at: new Date().toISOString(),
   };
   if (fullName !== undefined) updates.full_name = fullName.trim();
   if (avatarUrl !== undefined) updates.avatar_url = avatarUrl;
 
-  const { data: updated, error } = await db
+  let { data: updated, error } = await db
     .from('users')
     .update(updates)
     .eq('id', req.userId)
-    .select('id, email, full_name, username, avatar_url, status')
+    .select('id, email, full_name, username, avatar_url, status, is_handle_set')
     .single();
+
+  // If is_handle_set column does not exist yet on DB, fall back gracefully
+  if (error && error.message?.includes('is_handle_set')) {
+    delete updates.is_handle_set;
+    const fallbackRes = await db
+      .from('users')
+      .update(updates)
+      .eq('id', req.userId)
+      .select('id, email, full_name, username, avatar_url, status')
+      .single();
+    updated = fallbackRes.data;
+    error = fallbackRes.error;
+  }
 
   if (error) {
     if (error.code === '23505') {

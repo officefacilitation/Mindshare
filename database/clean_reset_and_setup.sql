@@ -35,6 +35,7 @@ CREATE TABLE public.users (
   username TEXT UNIQUE,
   avatar_url TEXT,
   status TEXT CHECK (status IN ('active', 'invited', 'pending')) DEFAULT 'active',
+  is_handle_set BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
@@ -57,14 +58,15 @@ BEGIN
     final_username := base_username || '_' || substr(NEW.id::text, 1, 4);
   END IF;
 
-  INSERT INTO public.users (id, email, full_name, username, avatar_url, status)
+  INSERT INTO public.users (id, email, full_name, username, avatar_url, status, is_handle_set)
   VALUES (
     NEW.id,
     NEW.email,
     COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', base_username),
     final_username,
     NEW.raw_user_meta_data->>'avatar_url',
-    'active'
+    'active',
+    FALSE
   )
   ON CONFLICT (id) DO UPDATE SET
     email = EXCLUDED.email,

@@ -5,6 +5,7 @@ export interface User {
   username?: string;
   avatar_url?: string;
   status?: 'active' | 'invited' | 'pending';
+  is_handle_set?: boolean;
 }
 
 export interface MentionUser {
