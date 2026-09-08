@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Brain, Menu, LogOut, HelpCircle, Copy, Check, Edit3, X, ShieldCheck } from 'lucide-react';
+import { Brain, Menu, LogOut, HelpCircle, Edit3, X, ShieldCheck } from 'lucide-react';
 import { User } from '../../lib/types';
 
 interface HeaderProps {
@@ -24,7 +24,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenEditProfile,
 }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [hasCopiedId, setHasCopiedId] = useState(false);
 
   const initials = (currentUser?.full_name || currentUser?.username || 'U')
     .split(' ')
@@ -32,15 +31,6 @@ export const Header: React.FC<HeaderProps> = ({
     .join('')
     .substring(0, 2)
     .toUpperCase();
-
-  const handleCopyUserId = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (currentUser?.id) {
-      navigator.clipboard.writeText(currentUser.id);
-      setHasCopiedId(true);
-      setTimeout(() => setHasCopiedId(false), 2000);
-    }
-  };
 
   return (
     <header className="sticky top-0 z-30 bg-surface/90 backdrop-blur-md hairline-b px-3 sm:px-6 py-2.5 transition-colors select-none">
@@ -153,31 +143,12 @@ export const Header: React.FC<HeaderProps> = ({
                       </button>
                     </div>
 
-                    {/* User ID Section */}
-                    <div className="py-2.5 hairline-b text-xs space-y-1">
-                      <span className="text-[10px] font-bold text-ink-subtle uppercase tracking-wider block">
-                        Account User ID:
+                    {/* Profile Summary Badge */}
+                    <div className="py-2.5 hairline-b flex items-center justify-between text-xs">
+                      <span className="text-[11px] font-semibold text-ink-muted">Workspace Role</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-light/60 text-primary font-semibold text-[11px]">
+                        <ShieldCheck className="w-3 h-3" /> Active Member
                       </span>
-                      <div className="flex items-center justify-between p-1.5 bg-canvas rounded-lg hairline-border">
-                        <code className="text-[10px] font-mono text-ink-muted truncate max-w-[180px]">
-                          {currentUser.id}
-                        </code>
-                        <button
-                          type="button"
-                          onClick={handleCopyUserId}
-                          className="flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline cursor-pointer shrink-0"
-                        >
-                          {hasCopiedId ? (
-                            <>
-                              <Check className="w-3 h-3 text-status-success" /> Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3 h-3" /> Copy
-                            </>
-                          )}
-                        </button>
-                      </div>
                     </div>
 
                     {/* Actions */}

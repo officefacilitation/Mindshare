@@ -74,10 +74,8 @@ export function App() {
     const res = await api.getMe();
     if (res.user) {
       setCurrentUser(res.user);
-      // If user has not confirmed their handle yet, open modal
-      const confirmedKey = 'mindshare_handle_confirmed_' + res.user.id;
-      const isConfirmed = localStorage.getItem(confirmedKey);
-      if (!isConfirmed) {
+      // Only prompt if user has no username set in database
+      if (!res.user.username || res.user.username.trim() === '') {
         setIsUsernameModalOpen(true);
       }
     }
@@ -151,9 +149,8 @@ export function App() {
     const res = await api.updateProfile({ username, fullName });
     if (res.user) {
       setCurrentUser(res.user);
-      localStorage.setItem('mindshare_handle_confirmed_' + res.user.id, 'true');
       setIsUsernameModalOpen(false);
-      addToast(`Handle updated to @${res.user.username}!`, 'success');
+      addToast(`Profile updated (@${res.user.username})`, 'success');
       await refresh();
       return { success: true };
     }
@@ -330,7 +327,11 @@ export function App() {
       {/* Onboarding & Edit Handle Modal */}
       <UsernameModal
         isOpen={isUsernameModalOpen}
+        currentUserId={currentUser?.id}
         currentName={currentUser?.full_name || ''}
+        currentUsername={currentUser?.username || ''}
+        teammates={teammates}
+        onClose={() => setIsUsernameModalOpen(false)}
         onSaveUsername={handleSaveUsername}
       />
 

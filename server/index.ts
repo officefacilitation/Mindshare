@@ -160,16 +160,16 @@ app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
     return res.status(400).json({ error: 'Username must be 2-24 alphanumeric characters or underscores.' });
   }
 
-  // Verify username uniqueness
+  // Verify username uniqueness (case-insensitive across all registered users)
   const { data: existing } = await db
     .from('users')
     .select('id')
-    .eq('username', cleanUsername)
+    .ilike('username', cleanUsername)
     .neq('id', req.userId)
     .maybeSingle();
 
   if (existing) {
-    return res.status(400).json({ error: `Username @${cleanUsername} is already taken by a teammate.` });
+    return res.status(409).json({ error: `Username @${cleanUsername} is already taken by a teammate.` });
   }
 
   const updates: any = {
@@ -187,6 +187,9 @@ app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
     .single();
 
   if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: `Username @${cleanUsername} is already taken.` });
+    }
     return res.status(500).json({ error: error.message });
   }
 
