@@ -8,6 +8,8 @@ import {
   getMyNotesCount,
   getUntaggedCount,
   getIsFeedLoading,
+  checkHasUnreadMentions,
+  markMentionsAsRead,
   createNote,
   deleteNote,
   updateNote,
@@ -40,6 +42,7 @@ export function App() {
   const [myNotesCount, setMyNotesCount] = useState<number>(() => getMyNotesCount());
   const [untaggedCount, setUntaggedCount] = useState<number>(() => getUntaggedCount());
   const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => getIsFeedLoading());
+  const [hasUnreadMentions, setHasUnreadMentions] = useState<boolean>(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOperator, setSearchOperator] = useState<'AND' | 'OR'>('AND');
@@ -83,6 +86,7 @@ export function App() {
     const res = await api.getMe();
     if (res.user) {
       setCurrentUser(res.user);
+      setHasUnreadMentions(checkHasUnreadMentions(res.user.id));
       // Prompt user to choose their handle if:
       // 1) is_handle_set is explicitly false (newly created account from Google/Email)
       // 2) OR user has no username set
@@ -131,6 +135,7 @@ export function App() {
       setMyNotesCount(getMyNotesCount());
       setUntaggedCount(getUntaggedCount());
       setIsFeedLoading(getIsFeedLoading());
+      setHasUnreadMentions(checkHasUnreadMentions(currentUser?.id));
 
       if (selectedNote) {
         const found = updatedNotes.find((n) => n.id === selectedNote.id);
@@ -138,7 +143,7 @@ export function App() {
       }
     });
     return () => unsubscribe();
-  }, [selectedNote]);
+  }, [selectedNote, currentUser?.id]);
 
   // Periodic poll & focus re-sync (every 15 seconds)
   useEffect(() => {
@@ -197,7 +202,8 @@ export function App() {
 
     // Instant 0ms feed switch from local RAM cache
     if (type === 'tagged_me') {
-      switchFeed('tagged_me');
+      switchFeed('tagged_me', currentUser?.id);
+      setHasUnreadMentions(false);
     } else {
       switchFeed('all');
     }
@@ -289,6 +295,7 @@ export function App() {
           activeFilter={activeFilter}
           searchQuery={searchQuery}
           searchOperator={searchOperator}
+          hasUnreadMentions={hasUnreadMentions}
           onSearchChange={setSearchQuery}
           onOperatorChange={setSearchOperator}
           onSelectFilter={handleSelectFilter}

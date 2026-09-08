@@ -32,10 +32,10 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
       onClick={onClose}
     >
       <div
-        className="bg-surface w-full max-w-md rounded-xl hairline-border shadow-2xl overflow-hidden transform transition-all duration-200"
+        className="bg-surface w-full max-w-md rounded-2xl hairline-border shadow-2xl overflow-hidden max-h-[90vh] flex flex-col transform transition-all duration-200"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 hairline-b bg-canvas/60">
+        <div className="flex items-center justify-between px-5 py-4 hairline-b bg-canvas/60 shrink-0">
           <h3 className="text-base font-semibold text-ink">{title}</h3>
           <button
             type="button"
@@ -45,7 +45,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="p-5">{children}</div>
+        <div className="p-5 overflow-y-auto flex-1">{children}</div>
       </div>
     </div>
   );

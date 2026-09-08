@@ -451,7 +451,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
 
       {/* Combobox Autocomplete Dropdown Popup */}
       {autocompleteMode && (
-        <div className="absolute left-4 z-40 bg-surface rounded-xl hairline-border shadow-dropdown py-1.5 w-64 max-h-48 overflow-y-auto animate-slide-up">
+        <div className="absolute left-4 z-40 bg-surface rounded-xl hairline-border shadow-dropdown py-1.5 w-64 max-w-[calc(100vw-32px)] max-h-48 overflow-y-auto animate-slide-up">
           <div className="px-3 py-1 text-[10px] font-bold text-ink-subtle uppercase tracking-wider hairline-b">
             Suggested {autocompleteMode === 'tag' ? 'Private Tags' : 'Teammates'}
           </div>

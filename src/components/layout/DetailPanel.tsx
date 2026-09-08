@@ -444,7 +444,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
           onClick={onClose}
         />
-        <div className="relative w-80 max-w-[85vw] h-full bg-surface shadow-2xl z-50 animate-slide-left">
+        <div className="relative w-84 max-w-[90vw] sm:max-w-[85vw] h-full bg-surface shadow-2xl z-50 animate-slide-left">
           {panelContent}
         </div>
       </div>

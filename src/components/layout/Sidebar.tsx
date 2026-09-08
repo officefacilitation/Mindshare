@@ -22,6 +22,7 @@ interface SidebarProps {
   };
   searchQuery: string;
   searchOperator: 'AND' | 'OR';
+  hasUnreadMentions?: boolean;
   onSearchChange: (q: string) => void;
   onOperatorChange: (op: 'AND' | 'OR') => void;
   onSelectFilter: (type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention', value?: string) => void;
@@ -40,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeFilter,
   searchQuery,
   searchOperator,
+  hasUnreadMentions = false,
   onSearchChange,
   onOperatorChange,
   onSelectFilter,
@@ -133,7 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* My Thoughts */}
             <button
               onClick={() => onSelectFilter('all')}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer min-h-[40px] ${
                 activeFilter.type === 'all' && !searchQuery
                   ? 'bg-surface text-primary font-semibold shadow-subtle hairline-border'
                   : 'text-ink-muted hover:text-ink hover:bg-surface/50'
@@ -142,7 +144,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span className="flex items-center gap-2">
                 <Inbox className="w-3.5 h-3.5" /> My Thoughts
               </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-canvas text-ink-muted">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-canvas text-ink-muted font-medium">
                 {allNotesCount}
               </span>
             </button>
@@ -150,18 +152,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Tagged Me Feed */}
             <button
               onClick={() => onSelectFilter('tagged_me')}
-              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs font-medium transition-colors cursor-pointer ${
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer min-h-[40px] ${
                 activeFilter.type === 'tagged_me'
                   ? 'bg-surface text-primary font-semibold shadow-subtle hairline-border'
                   : 'text-ink-muted hover:text-ink hover:bg-surface/50'
               }`}
             >
               <span className="flex items-center gap-2">
-                <Bell className={`w-3.5 h-3.5 ${mentionsCount > 0 ? 'text-primary' : ''}`} />
+                <Bell className={`w-3.5 h-3.5 ${hasUnreadMentions ? 'text-primary' : ''}`} />
                 <span>Tagged Me</span>
               </span>
               {mentionsCount > 0 ? (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary text-white font-bold animate-pulse">
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all ${
+                    hasUnreadMentions
+                      ? 'bg-primary text-white animate-pulse shadow-subtle'
+                      : 'bg-canvas text-ink-muted hairline-border'
+                  }`}
+                >
                   {mentionsCount}
                 </span>
               ) : (
@@ -333,7 +341,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="fixed inset-0 bg-black/40 backdrop-blur-xs transition-opacity"
             onClick={onCloseMobile}
           />
-          <div className="fixed inset-y-0 left-0 w-72 bg-surface shadow-modal z-10 flex flex-col">
+          <div className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-surface shadow-modal z-10 flex flex-col">
             {sidebarContent}
           </div>
         </div>

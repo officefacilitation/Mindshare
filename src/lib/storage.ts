@@ -86,12 +86,46 @@ export function getIsFeedLoading(): boolean {
 }
 
 /**
+ * Checks if there are any tagged thoughts created after the user last viewed the Tagged Me tab.
+ */
+export function checkHasUnreadMentions(userId?: string): boolean {
+  if (!userId) return false;
+  if (feedCaches.tagged_me.length === 0) return false;
+
+  const lastSeenStr = localStorage.getItem(`mindshare_tagged_last_seen_${userId}`);
+  if (!lastSeenStr) {
+    return feedCaches.tagged_me.length > 0;
+  }
+
+  const lastSeen = parseInt(lastSeenStr, 10);
+  if (isNaN(lastSeen)) return false;
+
+  return feedCaches.tagged_me.some((n) => {
+    const time = new Date(n.created_at).getTime();
+    return time > lastSeen;
+  });
+}
+
+/**
+ * Marks tagged thoughts as seen/read so the pulse immediately stops.
+ */
+export function markMentionsAsRead(userId?: string) {
+  if (!userId) return;
+  localStorage.setItem(`mindshare_tagged_last_seen_${userId}`, Date.now().toString());
+  notifyListeners();
+}
+
+/**
  * Switches the active feed in 0ms without waiting for network.
  * If cache exists, screen updates instantly. In background, revalidates cache.
  */
-export function switchFeed(feed: 'all' | 'tagged_me' | 'untagged') {
+export function switchFeed(feed: 'all' | 'tagged_me' | 'untagged', userId?: string) {
   currentFeed = feed;
   const targetKey = feed === 'tagged_me' ? 'tagged_me' : 'all';
+
+  if (feed === 'tagged_me' && userId) {
+    markMentionsAsRead(userId);
+  }
 
   // If feed is already cached, show it instantly in 0ms
   if (feedLoaded[targetKey]) {
