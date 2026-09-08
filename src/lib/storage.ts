@@ -1,5 +1,6 @@
 import { Note, Tag, User } from './types';
 import { api } from './api';
+import { playNotificationChime } from './sound';
 
 type StorageListener = () => void;
 const listeners = new Set<StorageListener>();
@@ -24,6 +25,7 @@ const feedLoaded: {
 let memoryTags: Tag[] = [];
 let memoryTeammates: User[] = [];
 let memoryMentionsCount = 0;
+let memoryUnreadMentionsCount = 0;
 let memoryHasUnreadMentions = false;
 let currentFeed: 'all' | 'tagged_me' | 'untagged' = 'all';
 let isFeedLoading = false;
@@ -165,6 +167,9 @@ export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): P
   }
 
   try {
+    const prevHasUnread = memoryHasUnreadMentions;
+    const prevUnreadCount = memoryUnreadMentionsCount;
+
     const [notesRes, tags, teammates, mentionsData] = await Promise.all([
       api.getNotes({ feed: targetKey }),
       api.getTags(),
@@ -177,8 +182,15 @@ export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): P
     memoryTags = tags;
     memoryTeammates = teammates;
     memoryMentionsCount = mentionsData.count;
+    memoryUnreadMentionsCount = mentionsData.unreadCount;
     memoryHasUnreadMentions = mentionsData.hasUnread;
     isFeedLoading = false;
+
+    // Play notification sound when a new mention arrives!
+    if (mentionsData.hasUnread && (!prevHasUnread || mentionsData.unreadCount > prevUnreadCount)) {
+      playNotificationChime();
+    }
+
     notifyListeners();
 
     // If hasUnread is true OR the other feed is not yet loaded, warm/refresh it quietly in background
