@@ -21,6 +21,18 @@ function getAudioContext(): AudioContext | null {
   }
 }
 
+// Mobile Browser Unlocker: Automatically unlock audio context on the first user tap/touch anywhere
+if (typeof window !== 'undefined') {
+  const unlockAudio = () => {
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+  };
+  window.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+  window.addEventListener('click', unlockAudio, { once: true, passive: true });
+}
+
 /**
  * Plays a warm, Slack/Apple-inspired harmonic double-tone ping when a mention arrives.
  */
