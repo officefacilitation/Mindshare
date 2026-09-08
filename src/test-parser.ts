@@ -95,7 +95,12 @@ const q2 = parseSearchQuery("#Frontend OR gateway");
 const r2 = filterNotes(sampleNotes, q2);
 console.log(`Search "#Frontend OR gateway" matched ${r2.length} notes (Expected 2)`);
 
-if (passedCount === totalCount && r1.length === 1 && r2.length === 2) {
+// Test 3: NOT query #Finance NOT #Frontend
+const q3 = parseSearchQuery("#Finance NOT #Frontend");
+const r3 = filterNotes(sampleNotes, q3);
+console.log(`Search "#Finance NOT #Frontend" matched ${r3.length} notes (Expected 1)`);
+
+if (passedCount === totalCount && r1.length === 1 && r2.length === 2 && r3.length === 1) {
   console.log("\n🎉 ALL TESTS PASSED SUCCESSFULLY! PARSER & SEARCH ENGINE VERIFIED 100% CORRECT.\n");
 } else {
   if (typeof process !== 'undefined') process.exit(1);

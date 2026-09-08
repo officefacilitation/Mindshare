@@ -5,12 +5,15 @@ import {
   getTags,
   getTeammates,
   getMentionsCount,
+  getMyNotesCount,
+  getUntaggedCount,
+  getIsFeedLoading,
   createNote,
   deleteNote,
   updateNote,
   subscribeToStorage,
   syncFromServer,
-  setCurrentFeed,
+  switchFeed,
 } from './lib/storage';
 import { api } from './lib/api';
 import { supabase } from './lib/supabase';
@@ -34,8 +37,12 @@ export function App() {
   const [tags, setTags] = useState<Tag[]>(() => getTags());
   const [teammates, setTeammates] = useState<User[]>(() => getTeammates());
   const [mentionsCount, setMentionsCount] = useState<number>(() => getMentionsCount());
+  const [myNotesCount, setMyNotesCount] = useState<number>(() => getMyNotesCount());
+  const [untaggedCount, setUntaggedCount] = useState<number>(() => getUntaggedCount());
+  const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => getIsFeedLoading());
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOperator, setSearchOperator] = useState<'AND' | 'OR'>('AND');
   const [activeFilter, setActiveFilter] = useState<{
     type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention';
     value?: string;
@@ -61,12 +68,14 @@ export function App() {
   // Full Refresh handler
   const refresh = useCallback(async (feedType?: 'all' | 'tagged_me' | 'untagged') => {
     const feed = feedType || (activeFilter.type === 'tagged_me' ? 'tagged_me' : 'all');
-    setCurrentFeed(feed);
     await syncFromServer(feed);
     setNotes(getNotes());
     setTags(getTags());
     setTeammates(getTeammates());
     setMentionsCount(getMentionsCount());
+    setMyNotesCount(getMyNotesCount());
+    setUntaggedCount(getUntaggedCount());
+    setIsFeedLoading(getIsFeedLoading());
   }, [activeFilter.type]);
 
   // Load User Profile
@@ -119,6 +128,9 @@ export function App() {
       setTags(getTags());
       setTeammates(getTeammates());
       setMentionsCount(getMentionsCount());
+      setMyNotesCount(getMyNotesCount());
+      setUntaggedCount(getUntaggedCount());
+      setIsFeedLoading(getIsFeedLoading());
 
       if (selectedNote) {
         const found = updatedNotes.find((n) => n.id === selectedNote.id);
@@ -183,10 +195,11 @@ export function App() {
     setSearchQuery('');
     setIsMobileSidebarOpen(false);
 
+    // Instant 0ms feed switch from local RAM cache
     if (type === 'tagged_me') {
-      refresh('tagged_me');
-    } else if (type === 'all' || type === 'untagged' || type === 'tag' || type === 'mention') {
-      refresh('all');
+      switchFeed('tagged_me');
+    } else {
+      switchFeed('all');
     }
   };
 
@@ -200,45 +213,44 @@ export function App() {
     setActiveFilter({ type: 'all' });
   };
 
-  const untaggedCount = useMemo(
-    () => notes.filter((n) => n.tags.length === 0).length,
-    [notes]
-  );
-
-  // Filter notes based on active filter and search query
+  // Filter notes based on active filter, boolean search query & operator
   const filteredNotes = useMemo(() => {
     let result = [...notes];
 
     if (activeFilter.type === 'untagged') {
-      result = result.filter((n) => n.tags.length === 0);
+      result = result.filter((n) => !n.tags || n.tags.length === 0);
     } else if (activeFilter.type === 'tag' && activeFilter.value) {
       const valLower = activeFilter.value.toLowerCase();
       result = result.filter((n) =>
-        n.tags.some((t) => t.name.toLowerCase() === valLower)
+        (n.tags || []).some((t) => t.name.toLowerCase() === valLower)
       );
     } else if (activeFilter.type === 'mention' && activeFilter.value) {
       const valLower = activeFilter.value.toLowerCase();
       result = result.filter((n) =>
-        n.mentions.some((m) => m.username.toLowerCase() === valLower)
+        (n.mentions || []).some((m) => m.username.toLowerCase() === valLower)
       );
     }
 
     if (searchQuery.trim()) {
       const parsedSearch = parseSearchQuery(searchQuery);
+      // Respect UI operator unless user typed explicit boolean operators in the query
+      if (!/\b(AND|OR)\b/i.test(searchQuery)) {
+        parsedSearch.operator = searchOperator;
+      }
       result = filterNotes(result, parsedSearch);
     }
 
     return result;
-  }, [notes, activeFilter, searchQuery]);
+  }, [notes, activeFilter, searchQuery, searchOperator]);
 
   const activeFilterTitle = useMemo(() => {
-    if (searchQuery.trim()) return `Search: "${searchQuery}"`;
+    if (searchQuery.trim()) return `Search: "${searchQuery}" (${searchOperator})`;
     if (activeFilter.type === 'tagged_me') return 'Thoughts where you were tagged';
     if (activeFilter.type === 'untagged') return 'Untagged thoughts';
     if (activeFilter.type === 'tag') return `#${activeFilter.value}`;
     if (activeFilter.type === 'mention') return `@${activeFilter.value}`;
     return undefined;
-  }, [searchQuery, activeFilter]);
+  }, [searchQuery, activeFilter, searchOperator]);
 
   if (isAuthed === false) {
     return <Login onSuccess={() => { setIsAuthed(true); loadProfile(); refresh(); }} />;
@@ -259,7 +271,7 @@ export function App() {
     <div className="min-h-screen flex flex-col bg-canvas text-ink font-sans">
       <Header
         currentUser={currentUser}
-        noteCount={notes.length}
+        noteCount={myNotesCount}
         tagCount={tags.length}
         teamCount={teammates.length}
         onToggleMobileSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
@@ -276,11 +288,13 @@ export function App() {
           currentUser={currentUser}
           activeFilter={activeFilter}
           searchQuery={searchQuery}
+          searchOperator={searchOperator}
           onSearchChange={setSearchQuery}
+          onOperatorChange={setSearchOperator}
           onSelectFilter={handleSelectFilter}
           onOpenEditProfile={() => setIsUsernameModalOpen(true)}
           mentionsCount={mentionsCount}
-          allNotesCount={notes.length}
+          allNotesCount={myNotesCount}
           untaggedCount={untaggedCount}
           isOpenMobile={isMobileSidebarOpen}
           onCloseMobile={() => setIsMobileSidebarOpen(false)}
@@ -301,6 +315,7 @@ export function App() {
             notes={filteredNotes}
             currentUserId={currentUser?.id}
             selectedNoteId={selectedNote?.id}
+            isLoading={isFeedLoading}
             onSelectNote={setSelectedNote}
             onDeleteNote={handleDeleteNote}
             onTagClick={handleTagClickFromCard}
@@ -309,7 +324,7 @@ export function App() {
             onClearFilter={() => {
               setSearchQuery('');
               setActiveFilter({ type: 'all' });
-              refresh('all');
+              switchFeed('all');
             }}
           />
         </main>

@@ -7,6 +7,7 @@ interface FeedListProps {
   notes: Note[];
   currentUserId?: string;
   selectedNoteId?: string;
+  isLoading?: boolean;
   onSelectNote: (note: Note) => void;
   onDeleteNote: (id: string) => void;
   onTagClick: (tagName: string) => void;
@@ -21,6 +22,7 @@ export const FeedList: React.FC<FeedListProps> = ({
   notes,
   currentUserId,
   selectedNoteId,
+  isLoading = false,
   onSelectNote,
   onDeleteNote,
   onTagClick,
@@ -52,8 +54,21 @@ export const FeedList: React.FC<FeedListProps> = ({
         </div>
       )}
 
-      {/* Empty State */}
-      {notes.length === 0 ? (
+      {/* Loading Skeleton */}
+      {isLoading ? (
+        <div className="space-y-3 py-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="p-4 rounded-2xl bg-surface hairline-border shadow-subtle animate-pulse space-y-2.5">
+              <div className="h-4 bg-hairline/60 rounded-md w-3/4" />
+              <div className="h-3 bg-hairline/40 rounded-md w-1/2" />
+              <div className="flex gap-2 pt-1">
+                <div className="h-4 bg-hairline/50 rounded-full w-14" />
+                <div className="h-4 bg-hairline/50 rounded-full w-16" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : notes.length === 0 ? (
         <div className="bg-surface rounded-2xl hairline-border p-8 sm:p-10 text-center shadow-subtle my-4">
           <div className="w-12 h-12 rounded-2xl bg-canvas flex items-center justify-center mx-auto mb-3 text-ink-muted hairline-border">
             <Inbox className="w-6 h-6 text-ink-subtle" />

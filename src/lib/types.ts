@@ -61,6 +61,9 @@ export interface SearchQuery {
   raw: string;
   tags: string[];
   mentions: string[];
+  excludeTags?: string[];
+  excludeMentions?: string[];
+  excludeWords?: string[];
   operator: 'AND' | 'OR';
   freetext: string;
 }

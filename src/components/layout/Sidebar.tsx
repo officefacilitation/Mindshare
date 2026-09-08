@@ -21,7 +21,9 @@ interface SidebarProps {
     value?: string;
   };
   searchQuery: string;
+  searchOperator: 'AND' | 'OR';
   onSearchChange: (q: string) => void;
+  onOperatorChange: (op: 'AND' | 'OR') => void;
   onSelectFilter: (type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention', value?: string) => void;
   onOpenEditProfile?: () => void;
   mentionsCount: number;
@@ -37,7 +39,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentUser,
   activeFilter,
   searchQuery,
+  searchOperator,
   onSearchChange,
+  onOperatorChange,
   onSelectFilter,
   onOpenEditProfile,
   mentionsCount,
@@ -66,13 +70,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Global Search Bar */}
-      <div className="relative mb-4">
+      <div className="relative mb-2">
         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none" />
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search thoughts, #tags, @people..."
+          placeholder="Search #tags, @people, words..."
           className="w-full pl-8 pr-7 py-2 text-xs rounded-xl bg-surface text-ink hairline-border placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-all shadow-subtle"
         />
         {searchQuery && (
@@ -83,6 +87,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
             ×
           </button>
         )}
+      </div>
+
+      {/* Boolean Match Operator Toggle */}
+      <div className="mb-4 px-1 flex items-center justify-between">
+        <span className="text-[10px] font-semibold text-ink-subtle uppercase tracking-wider">
+          Match:
+        </span>
+        <div className="flex items-center p-0.5 bg-canvas rounded-lg hairline-border text-[10px] font-medium">
+          <button
+            type="button"
+            onClick={() => onOperatorChange('AND')}
+            className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+              searchOperator === 'AND'
+                ? 'bg-surface text-primary font-bold shadow-subtle'
+                : 'text-ink-muted hover:text-ink'
+            }`}
+            title="Match ALL filters and terms (AND logic)"
+          >
+            ALL (AND)
+          </button>
+          <button
+            type="button"
+            onClick={() => onOperatorChange('OR')}
+            className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+              searchOperator === 'OR'
+                ? 'bg-surface text-primary font-bold shadow-subtle'
+                : 'text-ink-muted hover:text-ink'
+            }`}
+            title="Match ANY filter or term (OR logic)"
+          >
+            ANY (OR)
+          </button>
+        </div>
       </div>
 
       {/* Scrollable Navigation Sections */}
