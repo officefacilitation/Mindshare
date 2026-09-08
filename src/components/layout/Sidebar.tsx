@@ -9,22 +9,21 @@ import {
   AtSign,
   Users,
   X,
-  SlidersHorizontal,
+  Edit3,
 } from 'lucide-react';
 
 interface SidebarProps {
   tags: Tag[];
   teammates: User[];
-  currentUserId?: string;
+  currentUser?: User | null;
   activeFilter: {
     type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention';
     value?: string;
   };
   searchQuery: string;
-  searchOperator: 'AND' | 'OR';
   onSearchChange: (q: string) => void;
-  onOperatorChange: (op: 'AND' | 'OR') => void;
   onSelectFilter: (type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention', value?: string) => void;
+  onOpenEditProfile?: () => void;
   mentionsCount: number;
   allNotesCount: number;
   untaggedCount: number;
@@ -35,19 +34,22 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   tags,
   teammates,
-  currentUserId,
+  currentUser,
   activeFilter,
   searchQuery,
-  searchOperator,
   onSearchChange,
-  onOperatorChange,
   onSelectFilter,
+  onOpenEditProfile,
   mentionsCount,
   allNotesCount,
   untaggedCount,
   isOpenMobile,
   onCloseMobile,
 }) => {
+  // Separate current user from other colleagues in the directory
+  const currentUserId = currentUser?.id;
+  const otherTeammates = teammates.filter((u) => u.id !== currentUserId);
+
   const sidebarContent = (
     <div className="flex flex-col h-full py-4 px-3 select-none">
       {/* Mobile Drawer Header */}
@@ -64,14 +66,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Global Search Bar */}
-      <div className="relative mb-2.5">
+      <div className="relative mb-4">
         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none" />
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search thoughts, #tags, @people..."
-          className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl bg-surface text-ink hairline-border placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-all"
+          className="w-full pl-8 pr-7 py-2 text-xs rounded-xl bg-surface text-ink hairline-border placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-all shadow-subtle"
         />
         {searchQuery && (
           <button
@@ -81,37 +83,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             ×
           </button>
         )}
-      </div>
-
-      {/* Boolean Match Mode Toggle (AND / OR) */}
-      <div className="flex items-center justify-between px-1.5 py-1 mb-4 text-[11px] text-ink-muted bg-canvas rounded-lg hairline-border">
-        <span className="flex items-center gap-1 font-medium text-ink-subtle">
-          <SlidersHorizontal className="w-3 h-3" /> Match:
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onOperatorChange('AND')}
-            className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer ${
-              searchOperator === 'AND'
-                ? 'bg-primary text-white shadow-subtle'
-                : 'text-ink-muted hover:text-ink'
-            }`}
-          >
-            ALL (AND)
-          </button>
-          <button
-            type="button"
-            onClick={() => onOperatorChange('OR')}
-            className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors cursor-pointer ${
-              searchOperator === 'OR'
-                ? 'bg-primary text-white shadow-subtle'
-                : 'text-ink-muted hover:text-ink'
-            }`}
-          >
-            ANY (OR)
-          </button>
-        </div>
       </div>
 
       {/* Scrollable Navigation Sections */}
@@ -227,17 +198,54 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div>
           <div className="px-2 flex items-center justify-between mb-1.5">
             <h3 className="text-[10px] font-bold text-ink-subtle uppercase tracking-wider flex items-center gap-1">
-              <Users className="w-3 h-3 text-mention-text" /> Teammates
+              <Users className="w-3 h-3 text-mention-text" /> Team Directory ({teammates.length})
             </h3>
-            <span className="text-[10px] text-ink-subtle">{teammates.length}</span>
           </div>
 
+          {/* Current User Card (You) */}
+          {currentUser && (
+            <div className="mb-2 p-2 rounded-xl bg-primary-light/40 hairline-border border-primary/30">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                    {(currentUser.full_name || currentUser.username || 'Y')[0].toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="font-mono text-xs font-bold text-primary truncate">
+                        @{currentUser.username || 'user'}
+                      </span>
+                      <span className="text-[9px] px-1.5 py-0.2 bg-primary text-white rounded-full font-bold">
+                        YOU
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-ink-subtle truncate max-w-[130px]">
+                      {currentUser.email}
+                    </p>
+                  </div>
+                </div>
+                {onOpenEditProfile && (
+                  <button
+                    type="button"
+                    onClick={onOpenEditProfile}
+                    className="p-1 text-primary hover:bg-surface rounded-md transition-colors cursor-pointer"
+                    title="Edit your username handle"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Other Teammates in the Workspace */}
           <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
-            {teammates.length === 0 ? (
-              <p className="px-2 text-xs text-ink-subtle italic py-1">No other teammates yet.</p>
+            {otherTeammates.length === 0 ? (
+              <p className="px-2 text-xs text-ink-subtle italic py-1">
+                No other teammates yet. Invite colleagues with your app link!
+              </p>
             ) : (
-              teammates.map((u) => {
-                const isSelf = u.id === currentUserId;
+              otherTeammates.map((u) => {
                 const isActive = activeFilter.type === 'mention' && activeFilter.value === u.username;
                 return (
                   <button
@@ -260,12 +268,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <AtSign className="w-3 h-3 text-mention-text shrink-0" />
                       )}
                       <span className="truncate font-mono">@{u.username}</span>
-                      {isSelf && (
-                        <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary rounded">you</span>
-                      )}
                     </span>
                     <span className="text-[10px] text-ink-subtle truncate max-w-[70px]">
-                      {u.full_name?.split(' ')[0] || ''}
+                      {u.full_name?.split(' ')[0] || u.email?.split('@')[0] || ''}
                     </span>
                   </button>
                 );

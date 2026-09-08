@@ -1,6 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from './supabase.js';
 import { generateAITags } from './groq.js';
 import { parseNoteContent } from '../src/lib/parser.js';
@@ -8,6 +9,9 @@ import { uploadToCloudinary, deleteFromCloudinary } from './cloudinary.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
 
 app.use(cors({
   origin: '*',
@@ -30,6 +34,25 @@ interface AuthRequest extends Request {
   user?: any;
   userId?: string;
   userEmail?: string;
+  token?: string;
+}
+
+// Helper: Get user-scoped Supabase client with JWT passed in headers
+function getDb(req: AuthRequest) {
+  if (req.token && supabaseUrl && supabaseAnonKey) {
+    return createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          Authorization: `Bearer ${req.token}`,
+        },
+      },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    });
+  }
+  return supabase;
 }
 
 // Stateless Supabase JWT Authentication Middleware
@@ -54,6 +77,7 @@ async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) 
     req.user = user;
     req.userId = user.id;
     req.userEmail = user.email;
+    req.token = token;
     next();
   } catch (err: any) {
     return res.status(401).json({ error: `Auth Error: ${err.message}` });
@@ -81,9 +105,10 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
 
 // Get current user profile
 app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ error: 'Server error' });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Server error' });
 
-  const { data: userProfile, error } = await supabase
+  const { data: userProfile, error } = await db
     .from('users')
     .select('id, email, full_name, username, avatar_url, status')
     .eq('id', req.userId)
@@ -103,7 +128,7 @@ app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
   const fullName = req.user?.user_metadata?.full_name || req.user?.user_metadata?.name || fallbackUsername;
   const avatarUrl = req.user?.user_metadata?.avatar_url || null;
 
-  const { data: createdUser, error: insertErr } = await supabase
+  const { data: createdUser, error: insertErr } = await db
     .from('users')
     .upsert({
       id: req.userId,
@@ -125,7 +150,8 @@ app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
 
 // Update profile (e.g. claim / change @username and display name)
 app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ error: 'Server error' });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Server error' });
 
   const { username, fullName, avatarUrl } = req.body || {};
 
@@ -135,7 +161,7 @@ app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
   }
 
   // Verify username uniqueness
-  const { data: existing } = await supabase
+  const { data: existing } = await db
     .from('users')
     .select('id')
     .eq('username', cleanUsername)
@@ -153,7 +179,7 @@ app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
   if (fullName !== undefined) updates.full_name = fullName.trim();
   if (avatarUrl !== undefined) updates.avatar_url = avatarUrl;
 
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await db
     .from('users')
     .update(updates)
     .eq('id', req.userId)
@@ -168,13 +194,13 @@ app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
 });
 
 // Team directory endpoint: Returns all active registered teammates
-app.get('/api/users/directory', async (_req: AuthRequest, res: Response) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+app.get('/api/users/directory', async (req: AuthRequest, res: Response) => {
+  const db = getDb(req);
+  if (!db) return res.status(500).json({ error: 'Supabase not configured' });
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('users')
     .select('id, username, full_name, email, avatar_url')
-    .eq('status', 'active')
     .order('full_name', { ascending: true });
 
   if (error) return res.status(500).json({ error: error.message });
@@ -263,15 +289,14 @@ function mapNoteRow(n: any): any {
 }
 
 // Helper: Insert/Link tags strictly under user's private account
-async function batchInsertTagsAndJunctions(userId: string, noteId: string, tagNames: string[], isManual = true) {
-  if (!supabase || tagNames.length === 0) return;
+async function batchInsertTagsAndJunctions(db: any, userId: string, noteId: string, tagNames: string[], isManual = true) {
+  if (!db || tagNames.length === 0) return;
 
   for (const name of tagNames) {
     const cleanName = name.toLowerCase().trim();
     if (cleanName.length < 2) continue;
 
-    // Fetch existing tag for this user or create
-    const { data: existingTag } = await supabase
+    const { data: existingTag } = await db
       .from('tags')
       .select('id')
       .eq('user_id', userId)
@@ -281,7 +306,7 @@ async function batchInsertTagsAndJunctions(userId: string, noteId: string, tagNa
     let tagId = existingTag?.id;
 
     if (!tagId) {
-      const { data: newTag } = await supabase
+      const { data: newTag } = await db
         .from('tags')
         .insert({ user_id: userId, name: cleanName })
         .select('id')
@@ -291,7 +316,7 @@ async function batchInsertTagsAndJunctions(userId: string, noteId: string, tagNa
     }
 
     if (tagId) {
-      await supabase
+      await db
         .from('note_tags')
         .upsert({
           note_id: noteId,
@@ -305,15 +330,16 @@ async function batchInsertTagsAndJunctions(userId: string, noteId: string, tagNa
 }
 
 // Helper: Insert real teammate mentions
-async function batchInsertMentions(noteId: string, userIds: string[]) {
-  if (!supabase || userIds.length === 0) return;
+async function batchInsertMentions(db: any, noteId: string, userIds: string[]) {
+  if (!db || userIds.length === 0) return;
   const rows = userIds.map((userId) => ({ note_id: noteId, user_id: userId }));
-  await supabase.from('mentions').upsert(rows, { onConflict: 'note_id,user_id' });
+  await db.from('mentions').upsert(rows, { onConflict: 'note_id,user_id' });
 }
 
 // Get Notes with strict multi-user visibility & feeds
 app.get('/api/notes', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
   const userId = req.userId;
   const feed = (req.query.feed as string) || 'all'; // 'all' | 'tagged_me' | 'untagged'
@@ -323,7 +349,7 @@ app.get('/api/notes', async (req: AuthRequest, res: Response) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
   const offset = parseInt(req.query.offset as string) || 0;
 
-  let query = supabase
+  let query = db
     .from('notes')
     .select(`
       id,
@@ -345,8 +371,7 @@ app.get('/api/notes', async (req: AuthRequest, res: Response) => {
     .is('deleted_at', null);
 
   if (feed === 'tagged_me') {
-    // Fetch notes authored by others where current user was mentioned
-    const { data: mentionRows } = await supabase
+    const { data: mentionRows } = await db
       .from('mentions')
       .select('note_id')
       .eq('user_id', userId);
@@ -358,11 +383,9 @@ app.get('/api/notes', async (req: AuthRequest, res: Response) => {
 
     query = query.in('id', noteIds).neq('user_id', userId);
   } else {
-    // Personal notes feed: Only notes authored by current user
     query = query.eq('user_id', userId);
   }
 
-  // Full-Text Search with operator sanitization
   if (searchQuery) {
     const cleanSearch = searchQuery
       .replace(/[!&|():*]/g, ' ')
@@ -389,7 +412,6 @@ app.get('/api/notes', async (req: AuthRequest, res: Response) => {
 
   let notes = (data || []).map(mapNoteRow);
 
-  // Apply in-memory tag/mention/untagged filter refinements
   if (feed === 'untagged') {
     notes = notes.filter((n) => n.tags.length === 0);
   }
@@ -416,9 +438,10 @@ app.get('/api/notes', async (req: AuthRequest, res: Response) => {
 
 // Count unread / total mentions for the user (to show badge in sidebar)
 app.get('/api/notes/mentions-count', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ count: 0 });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ count: 0 });
 
-  const { count, error } = await supabase
+  const { count, error } = await db
     .from('mentions')
     .select('note_id', { count: 'exact', head: true })
     .eq('user_id', req.userId);
@@ -429,7 +452,8 @@ app.get('/api/notes/mentions-count', async (req: AuthRequest, res: Response) => 
 
 // Create Note
 app.post('/api/notes', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
   const { content, manualTags } = req.body || {};
   const parsed = parseNoteContent(content || '');
@@ -437,18 +461,16 @@ app.post('/api/notes', async (req: AuthRequest, res: Response) => {
     return res.status(400).json({ error: parsed.errors[0] || 'Invalid note content.', success: false });
   }
 
-  // Combine tags from content text with any explicitly selected tags
   const combinedTags = Array.from(new Set([
     ...parsed.tags,
     ...(Array.isArray(manualTags) ? manualTags : [])
   ].map((t) => t.toLowerCase().trim())));
 
-  // Resolve mentioned @usernames to real registered teammate UUIDs
   let mentionedUserIds: string[] = [];
   let matchedTeammates: any[] = [];
 
   if (parsed.mentions.length > 0) {
-    const { data: usersData } = await supabase
+    const { data: usersData } = await db
       .from('users')
       .select('id, username, full_name, email, avatar_url')
       .in('username', parsed.mentions.map((m) => m.toLowerCase()));
@@ -460,7 +482,7 @@ app.post('/api/notes', async (req: AuthRequest, res: Response) => {
   const noteId = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  const { error: noteErr } = await supabase.from('notes').insert({
+  const { error: noteErr } = await db.from('notes').insert({
     id: noteId,
     user_id: req.userId,
     content,
@@ -469,12 +491,12 @@ app.post('/api/notes', async (req: AuthRequest, res: Response) => {
   });
 
   if (noteErr) {
+    console.error('Note insert error:', noteErr);
     return res.status(500).json({ error: `Could not save note: ${noteErr.message}`, success: false });
   }
 
-  // Batch insert personal tags & real teammate mentions
-  await batchInsertTagsAndJunctions(req.userId, noteId, combinedTags, true);
-  await batchInsertMentions(noteId, mentionedUserIds);
+  await batchInsertTagsAndJunctions(db, req.userId, noteId, combinedTags, true);
+  await batchInsertMentions(db, noteId, mentionedUserIds);
 
   const tags = combinedTags.map((t) => ({
     id: `t-${t}`,
@@ -507,7 +529,8 @@ app.post('/api/notes', async (req: AuthRequest, res: Response) => {
 
 // Update Note (User can only update their own notes)
 app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
   const { id } = req.params;
   const { content, manualTags } = req.body || {};
@@ -519,8 +542,7 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
 
   const now = new Date().toISOString();
 
-  // Verify ownership
-  const { data: updatedRow, error: updateErr } = await supabase
+  const { data: updatedRow, error: updateErr } = await db
     .from('notes')
     .update({ content, updated_at: now })
     .eq('id', id)
@@ -544,7 +566,7 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
   let matchedTeammates: any[] = [];
 
   if (parsed.mentions.length > 0) {
-    const { data: usersData } = await supabase
+    const { data: usersData } = await db
       .from('users')
       .select('id, username, full_name, email, avatar_url')
       .in('username', parsed.mentions.map((m) => m.toLowerCase()));
@@ -553,12 +575,11 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
     mentionedUserIds = matchedTeammates.map((u) => u.id);
   }
 
-  // Re-sync relations
-  await supabase.from('note_tags').delete().eq('note_id', id);
-  await supabase.from('mentions').delete().eq('note_id', id);
+  await db.from('note_tags').delete().eq('note_id', id);
+  await db.from('mentions').delete().eq('note_id', id);
 
-  await batchInsertTagsAndJunctions(req.userId, id, combinedTags, true);
-  await batchInsertMentions(id, mentionedUserIds);
+  await batchInsertTagsAndJunctions(db, req.userId, id, combinedTags, true);
+  await batchInsertMentions(db, id, mentionedUserIds);
 
   const tags = combinedTags.map((t) => ({
     id: `t-${t}`,
@@ -591,12 +612,12 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
 
 // Delete Note (User can only delete their own notes)
 app.delete('/api/notes/:id', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
   const { id } = req.params;
 
-  // 1. Fetch note content to extract Cloudinary images
-  const { data: noteRow } = await supabase
+  const { data: noteRow } = await db
     .from('notes')
     .select('content')
     .eq('id', id)
@@ -620,8 +641,7 @@ app.delete('/api/notes/:id', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  // 2. Delete Note
-  const { error } = await supabase
+  const { error } = await db
     .from('notes')
     .delete()
     .eq('id', id)
@@ -636,9 +656,10 @@ app.delete('/api/notes/:id', async (req: AuthRequest, res: Response) => {
 
 // Get User's Private Tags with Note Counts
 app.get('/api/tags', async (req: AuthRequest, res: Response) => {
-  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
-  const { data: userTags, error } = await supabase
+  const { data: userTags, error } = await db
     .from('tags')
     .select('id, name, created_at')
     .eq('user_id', req.userId)
@@ -646,8 +667,7 @@ app.get('/api/tags', async (req: AuthRequest, res: Response) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // Get note counts per tag for this user
-  const { data: noteTags } = await supabase
+  const { data: noteTags } = await db
     .from('note_tags')
     .select(`
       tag_id,

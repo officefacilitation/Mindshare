@@ -36,7 +36,6 @@ export function App() {
   const [mentionsCount, setMentionsCount] = useState<number>(() => getMentionsCount());
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchOperator, setSearchOperator] = useState<'AND' | 'OR'>('AND');
   const [activeFilter, setActiveFilter] = useState<{
     type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention';
     value?: string;
@@ -75,8 +74,10 @@ export function App() {
     const res = await api.getMe();
     if (res.user) {
       setCurrentUser(res.user);
-      // If handle is default or generated placeholder, open onboarding modal
-      if (!res.user.username || res.user.username.startsWith('user_')) {
+      // If user has not confirmed their handle yet, open modal
+      const confirmedKey = 'mindshare_handle_confirmed_' + res.user.id;
+      const isConfirmed = localStorage.getItem(confirmedKey);
+      if (!isConfirmed) {
         setIsUsernameModalOpen(true);
       }
     }
@@ -127,12 +128,12 @@ export function App() {
     return () => unsubscribe();
   }, [selectedNote]);
 
-  // Periodic poll & focus re-sync (every 20 seconds)
+  // Periodic poll & focus re-sync (every 15 seconds)
   useEffect(() => {
     if (!isAuthed) return;
     const onFocus = () => refresh();
     window.addEventListener('focus', onFocus);
-    const interval = setInterval(() => refresh(), 20000);
+    const interval = setInterval(() => refresh(), 15000);
     return () => {
       window.removeEventListener('focus', onFocus);
       clearInterval(interval);
@@ -150,12 +151,13 @@ export function App() {
     const res = await api.updateProfile({ username, fullName });
     if (res.user) {
       setCurrentUser(res.user);
+      localStorage.setItem('mindshare_handle_confirmed_' + res.user.id, 'true');
       setIsUsernameModalOpen(false);
-      addToast(`Handle set to @${res.user.username}! You can now be tagged by teammates.`, 'success');
+      addToast(`Handle updated to @${res.user.username}!`, 'success');
       await refresh();
       return { success: true };
     }
-    return { error: res.error || 'Failed to set username' };
+    return { error: res.error || 'Failed to update username' };
   };
 
   const handleSaveNote = async (content: string, manualTags?: string[]) => {
@@ -199,13 +201,12 @@ export function App() {
     setActiveFilter({ type: 'all' });
   };
 
-  // Compute counts for Inbox nav
   const untaggedCount = useMemo(
     () => notes.filter((n) => n.tags.length === 0).length,
     [notes]
   );
 
-  // Filter notes based on active filter, boolean search query & operator
+  // Filter notes based on active filter and search query
   const filteredNotes = useMemo(() => {
     let result = [...notes];
 
@@ -225,22 +226,20 @@ export function App() {
 
     if (searchQuery.trim()) {
       const parsedSearch = parseSearchQuery(searchQuery);
-      // Override parsed operator with UI toggle if user selected OR explicitly
-      parsedSearch.operator = searchOperator;
       result = filterNotes(result, parsedSearch);
     }
 
     return result;
-  }, [notes, activeFilter, searchQuery, searchOperator]);
+  }, [notes, activeFilter, searchQuery]);
 
   const activeFilterTitle = useMemo(() => {
-    if (searchQuery.trim()) return `Search: "${searchQuery}" (${searchOperator})`;
+    if (searchQuery.trim()) return `Search: "${searchQuery}"`;
     if (activeFilter.type === 'tagged_me') return 'Thoughts where you were tagged';
     if (activeFilter.type === 'untagged') return 'Untagged thoughts';
     if (activeFilter.type === 'tag') return `#${activeFilter.value}`;
     if (activeFilter.type === 'mention') return `@${activeFilter.value}`;
     return undefined;
-  }, [searchQuery, activeFilter, searchOperator]);
+  }, [searchQuery, activeFilter]);
 
   if (isAuthed === false) {
     return <Login onSuccess={() => { setIsAuthed(true); loadProfile(); refresh(); }} />;
@@ -267,6 +266,7 @@ export function App() {
         onToggleMobileSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
         onLogout={handleLogout}
         onOpenGuide={() => setIsGuideOpen(true)}
+        onOpenEditProfile={() => setIsUsernameModalOpen(true)}
       />
 
       <div className="flex-1 max-w-7xl w-full mx-auto flex items-start">
@@ -274,13 +274,12 @@ export function App() {
         <Sidebar
           tags={tags}
           teammates={teammates}
-          currentUserId={currentUser?.id}
+          currentUser={currentUser}
           activeFilter={activeFilter}
           searchQuery={searchQuery}
-          searchOperator={searchOperator}
           onSearchChange={setSearchQuery}
-          onOperatorChange={setSearchOperator}
           onSelectFilter={handleSelectFilter}
+          onOpenEditProfile={() => setIsUsernameModalOpen(true)}
           mentionsCount={mentionsCount}
           allNotesCount={notes.length}
           untaggedCount={untaggedCount}
@@ -328,7 +327,7 @@ export function App() {
         />
       </div>
 
-      {/* Onboarding Handle Claim Modal */}
+      {/* Onboarding & Edit Handle Modal */}
       <UsernameModal
         isOpen={isUsernameModalOpen}
         currentName={currentUser?.full_name || ''}

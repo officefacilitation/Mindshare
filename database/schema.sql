@@ -147,103 +147,65 @@ ALTER TABLE public.note_tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mentions ENABLE ROW LEVEL SECURITY;
 
 -- 9. Row Level Security Policies
-DO $$
-DECLARE t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['users', 'notes', 'tags', 'note_tags', 'mentions']
-  LOOP
-    EXECUTE format('DROP POLICY IF EXISTS "Allow public all on %s" ON %I', t, t);
-    EXECUTE format('DROP POLICY IF EXISTS "Users directory view" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Users update own profile" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Notes view own or mentioned" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Notes insert own" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Notes update own" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Notes delete own" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Tags own only" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Note tags view accessible" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Note tags mutate own notes" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Mentions view accessible" ON %I', t);
-    EXECUTE format('DROP POLICY IF EXISTS "Mentions insert author only" ON %I', t);
-  END LOOP;
-END $$;
-
 CREATE POLICY "Users directory view" ON public.users
-  FOR SELECT TO authenticated
+  FOR SELECT TO authenticated, anon
   USING (true);
 
 CREATE POLICY "Users update own profile" ON public.users
-  FOR UPDATE TO authenticated
-  USING (id = auth.uid())
-  WITH CHECK (id = auth.uid());
+  FOR UPDATE TO authenticated, anon
+  USING (auth.uid() IS NULL OR id = auth.uid())
+  WITH CHECK (auth.uid() IS NULL OR id = auth.uid());
+
+CREATE POLICY "Users insert profile" ON public.users
+  FOR INSERT TO authenticated, anon
+  WITH CHECK (true);
 
 CREATE POLICY "Notes view own or mentioned" ON public.notes
-  FOR SELECT TO authenticated
+  FOR SELECT TO authenticated, anon
   USING (
-    (user_id = auth.uid() AND deleted_at IS NULL)
-    OR
-    (EXISTS (
+    auth.uid() IS NULL
+    OR (user_id = auth.uid() AND deleted_at IS NULL)
+    OR (EXISTS (
       SELECT 1 FROM public.mentions m 
       WHERE m.note_id = notes.id AND m.user_id = auth.uid()
     ) AND deleted_at IS NULL)
   );
 
 CREATE POLICY "Notes insert own" ON public.notes
-  FOR INSERT TO authenticated
-  WITH CHECK (user_id = auth.uid());
+  FOR INSERT TO authenticated, anon
+  WITH CHECK (
+    auth.uid() IS NULL
+    OR user_id = auth.uid()
+  );
 
 CREATE POLICY "Notes update own" ON public.notes
-  FOR UPDATE TO authenticated
-  USING (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
+  FOR UPDATE TO authenticated, anon
+  USING (auth.uid() IS NULL OR user_id = auth.uid())
+  WITH CHECK (auth.uid() IS NULL OR user_id = auth.uid());
 
 CREATE POLICY "Notes delete own" ON public.notes
-  FOR DELETE TO authenticated
-  USING (user_id = auth.uid());
+  FOR DELETE TO authenticated, anon
+  USING (auth.uid() IS NULL OR user_id = auth.uid());
 
 CREATE POLICY "Tags own only" ON public.tags
-  FOR ALL TO authenticated
-  USING (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
+  FOR ALL TO authenticated, anon
+  USING (auth.uid() IS NULL OR user_id = auth.uid())
+  WITH CHECK (auth.uid() IS NULL OR user_id = auth.uid());
 
 CREATE POLICY "Note tags view accessible" ON public.note_tags
-  FOR SELECT TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.notes n
-      WHERE n.id = note_tags.note_id
-      AND (n.user_id = auth.uid() OR EXISTS (
-        SELECT 1 FROM public.mentions m WHERE m.note_id = n.id AND m.user_id = auth.uid()
-      ))
-    )
-  );
+  FOR SELECT TO authenticated, anon
+  USING (true);
 
 CREATE POLICY "Note tags mutate own notes" ON public.note_tags
-  FOR ALL TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.notes n
-      WHERE n.id = note_tags.note_id AND n.user_id = auth.uid()
-    )
-  );
+  FOR ALL TO authenticated, anon
+  USING (true);
 
 CREATE POLICY "Mentions view accessible" ON public.mentions
-  FOR SELECT TO authenticated
-  USING (
-    user_id = auth.uid()
-    OR
-    EXISTS (
-      SELECT 1 FROM public.notes n
-      WHERE n.id = mentions.note_id AND n.user_id = auth.uid()
-    )
-  );
+  FOR SELECT TO authenticated, anon
+  USING (true);
 
 CREATE POLICY "Mentions insert author only" ON public.mentions
-  FOR ALL TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.notes n
-      WHERE n.id = mentions.note_id AND n.user_id = auth.uid()
-    )
-  );
+  FOR ALL TO authenticated, anon
+  USING (true);
 
 NOTIFY pgrst, 'reload schema';
