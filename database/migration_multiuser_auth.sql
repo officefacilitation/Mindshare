@@ -1,13 +1,13 @@
 -- ========================================================
--- MINDSHARE MULTI-USER SAAS DATABASE SCHEMA (Supabase PostgreSQL)
--- Multi-Tenancy, Strict RLS Privacy, Scalable FTS, & Team Mentions
+-- MINDSHARE MULTI-USER PRIVACY & AUTH MIGRATION SCRIPT (FIXED)
+-- Run this in your Supabase Project SQL Editor
 -- ========================================================
 
--- Enable Extensions
+-- 1. Enable Required Extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
--- 1. Users Table (Linked to Supabase Auth)
+-- 2. Users Table (Linked to Supabase Auth)
 CREATE TABLE IF NOT EXISTS public.users (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
@@ -19,13 +19,14 @@ CREATE TABLE IF NOT EXISTS public.users (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
+-- Safely add any columns if users table pre-existed
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS full_name TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS username TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT now();
 
--- 2. Automatic User Profile Creation Trigger on Auth Signup
+-- 3. Automatic User Profile Creation Trigger on Auth Signup
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -52,7 +53,19 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT OR UPDATE ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 3. Notes Table with Full-Text Search (FTS)
+-- Backfill any existing auth.users into public.users
+INSERT INTO public.users (id, email, full_name, username, avatar_url, status)
+SELECT 
+  id,
+  email,
+  COALESCE(raw_user_meta_data->>'full_name', raw_user_meta_data->>'name', split_part(email, '@', 1)),
+  LOWER(REGEXP_REPLACE(split_part(email, '@', 1), '[^a-zA-Z0-9_]', '', 'g')),
+  raw_user_meta_data->>'avatar_url',
+  'active'
+FROM auth.users
+ON CONFLICT (id) DO NOTHING;
+
+-- 4. Notes Table with Full-Text Search (FTS)
 CREATE TABLE IF NOT EXISTS public.notes (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -65,6 +78,7 @@ CREATE TABLE IF NOT EXISTS public.notes (
 ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS user_id UUID;
 ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
 
+-- Safely add FTS vector column if missing
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -75,7 +89,7 @@ BEGIN
   END IF;
 END $$;
 
--- 4. Tags Table (Strictly Private to each user)
+-- 5. Tags Table (Strictly Private per User)
 CREATE TABLE IF NOT EXISTS public.tags (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -89,7 +103,7 @@ DROP INDEX IF EXISTS idx_tags_lower_name;
 DROP INDEX IF EXISTS idx_tags_user_lower_name;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tags_user_lower_name ON public.tags (user_id, LOWER(name));
 
--- 5. Note-Tags Junction
+-- 6. Note-Tags Junction
 CREATE TABLE IF NOT EXISTS public.note_tags (
   note_id UUID NOT NULL REFERENCES public.notes(id) ON DELETE CASCADE,
   tag_id UUID NOT NULL REFERENCES public.tags(id) ON DELETE CASCADE,
@@ -103,13 +117,15 @@ CREATE TABLE IF NOT EXISTS public.note_tags (
 ALTER TABLE public.note_tags ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT TRUE;
 ALTER TABLE public.note_tags ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
 
--- 6. Mentions Table (Migration from old contact_id to real registered user_id)
+-- 7. Mentions Table (Migration from old contact_id to real registered user_id)
+-- Safe migration: Check if old mentions table used contact_id or mentioned_user_id
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns 
     WHERE table_schema = 'public' AND table_name = 'mentions' AND column_name = 'contact_id'
   ) THEN
+    -- Drop old mock contacts foreign key and table structure
     DROP TABLE IF EXISTS public.mentions CASCADE;
   ELSIF EXISTS (
     SELECT 1 FROM information_schema.columns 
@@ -119,6 +135,7 @@ BEGIN
   END IF;
 END $$;
 
+-- Clean creation of real multi-user mentions table
 CREATE TABLE IF NOT EXISTS public.mentions (
   note_id UUID NOT NULL REFERENCES public.notes(id) ON DELETE CASCADE,
   user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
@@ -126,9 +143,10 @@ CREATE TABLE IF NOT EXISTS public.mentions (
   PRIMARY KEY (note_id, user_id)
 );
 
+-- Ensure user_id column exists if table wasn't dropped
 ALTER TABLE public.mentions ADD COLUMN IF NOT EXISTS user_id UUID;
 
--- 7. Production Performance Indexes for 10,000+ Notes Scale
+-- 8. High-Performance Indexes for 10,000+ Notes Scale
 DROP INDEX IF EXISTS idx_mentions_contact;
 CREATE INDEX IF NOT EXISTS idx_notes_user_created ON public.notes (user_id, created_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_notes_fts ON public.notes USING GIN (fts);
@@ -139,14 +157,14 @@ CREATE INDEX IF NOT EXISTS idx_mentions_user ON public.mentions (user_id);
 CREATE INDEX IF NOT EXISTS idx_mentions_note ON public.mentions (note_id);
 CREATE INDEX IF NOT EXISTS idx_users_username ON public.users (LOWER(username));
 
--- 8. Enable Row Level Security (RLS)
+-- 9. Row Level Security (RLS) Configuration
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.note_tags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mentions ENABLE ROW LEVEL SECURITY;
 
--- 9. Row Level Security Policies
+-- Clean existing policies safely
 DO $$
 DECLARE t text;
 BEGIN
@@ -167,6 +185,7 @@ BEGIN
   END LOOP;
 END $$;
 
+-- Policy: Users table
 CREATE POLICY "Users directory view" ON public.users
   FOR SELECT TO authenticated
   USING (true);
@@ -176,6 +195,7 @@ CREATE POLICY "Users update own profile" ON public.users
   USING (id = auth.uid())
   WITH CHECK (id = auth.uid());
 
+-- Policy: Notes table (Personal notes + notes where tagged)
 CREATE POLICY "Notes view own or mentioned" ON public.notes
   FOR SELECT TO authenticated
   USING (
@@ -200,11 +220,13 @@ CREATE POLICY "Notes delete own" ON public.notes
   FOR DELETE TO authenticated
   USING (user_id = auth.uid());
 
+-- Policy: Tags table (100% Private to each user)
 CREATE POLICY "Tags own only" ON public.tags
   FOR ALL TO authenticated
   USING (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 
+-- Policy: Note Tags Junction
 CREATE POLICY "Note tags view accessible" ON public.note_tags
   FOR SELECT TO authenticated
   USING (
@@ -226,6 +248,7 @@ CREATE POLICY "Note tags mutate own notes" ON public.note_tags
     )
   );
 
+-- Policy: Mentions Table
 CREATE POLICY "Mentions view accessible" ON public.mentions
   FOR SELECT TO authenticated
   USING (
@@ -246,4 +269,5 @@ CREATE POLICY "Mentions insert author only" ON public.mentions
     )
   );
 
+-- Reload PostgREST schema cache
 NOTIFY pgrst, 'reload schema';

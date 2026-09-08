@@ -1,27 +1,23 @@
-import { Note, UserContact } from './types';
+import { Note, Tag, User } from './types';
+import { supabase } from './supabase';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || '/api';
 
-let authToken: string | null = typeof localStorage !== 'undefined' ? localStorage.getItem('mindshare_token') : null;
-
-export function getAuthToken(): string | null {
-  return authToken;
-}
-
-export function setAuthToken(token: string | null) {
-  authToken = token;
-  if (token) {
-    localStorage.setItem('mindshare_token', token);
-  } else {
-    localStorage.removeItem('mindshare_token');
+async function getAccessToken(): Promise<string | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || null;
+  } catch {
+    return null;
   }
 }
 
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const token = await getAccessToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
 
@@ -39,13 +35,10 @@ async function request<T = any>(path: string, options: RequestInit = {}): Promis
   } as unknown as T;
 }
 
-/**
- * Frontend API Client for the Mindshare backend.
- * The backend owns Supabase + Groq, so no secrets are ever shipped to the browser.
- */
 export const api = {
   getBaseUrl: () => API_BASE_URL,
 
+  // Health check
   async getHealth() {
     try {
       const res = await fetch(`${API_BASE_URL}/health`);
@@ -55,58 +48,140 @@ export const api = {
     }
   },
 
-  async login(password: string): Promise<{ token?: string; error?: string }> {
+  // Supabase Authentication Wrappers
+  async signInWithGoogle(): Promise<{ error?: string }> {
     try {
-      const { ok, status, data } = await request('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ password }),
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
       });
-      if (!ok) return { error: data?.error || 'Invalid password' };
-      return { token: data.token };
-    } catch (e) {
-      return { error: 'Cannot reach the Mindshare server. Make sure it is running (npm run dev --prefix server).' };
+      if (error) return { error: error.message };
+      return {};
+    } catch (e: any) {
+      return { error: e.message || 'Failed to initialize Google login' };
     }
   },
 
-  async logout(): Promise<void> {
+  async signInWithPassword(email: string, password: string): Promise<{ user?: any; error?: string }> {
     try {
-      await request('/auth/logout', { method: 'POST' });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) return { error: error.message };
+      return { user: data.user };
+    } catch (e: any) {
+      return { error: e.message || 'Login failed' };
+    }
+  },
+
+  async signUpWithPassword(email: string, password: string, fullName?: string): Promise<{ user?: any; error?: string }> {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: fullName?.trim() || '',
+          },
+        },
+      });
+      if (error) return { error: error.message };
+      return { user: data.user };
+    } catch (e: any) {
+      return { error: e.message || 'Registration failed' };
+    }
+  },
+
+  async signOut(): Promise<void> {
+    try {
+      await supabase.auth.signOut();
     } catch (e) {
       /* ignore */
     }
   },
 
-  async me(): Promise<boolean> {
+  // User Profile & Directory
+  async getMe(): Promise<{ user?: User; error?: string }> {
     try {
-      const { ok } = await request('/auth/me');
-      return ok;
+      const { ok, data } = await request('/users/me');
+      if (!ok) return { error: data?.error || 'Failed to load profile' };
+      return { user: data.user };
     } catch (e) {
-      return false;
+      return { error: 'Network error connecting to backend' };
     }
   },
 
-  async getNotes(tag?: string, mention?: string, search?: string, limit?: number, offset?: number): Promise<Note[]> {
+  async updateProfile(updates: { username?: string; fullName?: string; avatarUrl?: string }): Promise<{ user?: User; error?: string }> {
     try {
-      const query = new URLSearchParams();
-      if (tag) query.append('tag', tag);
-      if (mention) query.append('mention', mention);
-      if (search) query.append('q', search);
-      if (limit !== undefined) query.append('limit', String(limit));
-      if (offset !== undefined) query.append('offset', String(offset));
-      const { ok, data } = await request(`/notes?${query.toString()}`);
-      if (!ok) throw new Error(data?.error || 'Failed to fetch notes');
-      return data?.notes || [];
+      const { ok, data } = await request('/users/profile', {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+      });
+      if (!ok) return { error: data?.error || 'Failed to update profile' };
+      return { user: data.user };
     } catch (e) {
-      console.warn('[API Client] Failed to fetch notes:', e);
+      return { error: 'Network error updating profile' };
+    }
+  },
+
+  async getTeamDirectory(): Promise<User[]> {
+    try {
+      const { ok, data } = await request('/users/directory');
+      if (!ok) return [];
+      return data?.users || [];
+    } catch (e) {
       return [];
     }
   },
 
-  async createNote(content: string): Promise<{ note?: Note; error?: string }> {
+  // Notes Management (Personal & Tagged Me)
+  async getNotes(params: {
+    feed?: 'all' | 'tagged_me' | 'untagged';
+    tag?: string;
+    mention?: string;
+    search?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<{ notes: Note[]; total: number }> {
+    try {
+      const query = new URLSearchParams();
+      if (params.feed) query.append('feed', params.feed);
+      if (params.tag) query.append('tag', params.tag);
+      if (params.mention) query.append('mention', params.mention);
+      if (params.search) query.append('q', params.search);
+      if (params.limit !== undefined) query.append('limit', String(params.limit));
+      if (params.offset !== undefined) query.append('offset', String(params.offset));
+
+      const { ok, data } = await request(`/notes?${query.toString()}`);
+      if (!ok) throw new Error(data?.error || 'Failed to fetch notes');
+      return {
+        notes: data?.notes || [],
+        total: data?.total || 0,
+      };
+    } catch (e) {
+      console.warn('[API Client] Failed to fetch notes:', e);
+      return { notes: [], total: 0 };
+    }
+  },
+
+  async getMentionsCount(): Promise<number> {
+    try {
+      const { ok, data } = await request('/notes/mentions-count');
+      if (ok && typeof data?.count === 'number') return data.count;
+      return 0;
+    } catch {
+      return 0;
+    }
+  },
+
+  async createNote(content: string, manualTags?: string[]): Promise<{ note?: Note; error?: string }> {
     try {
       const { ok, data } = await request('/notes', {
         method: 'POST',
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, manualTags }),
       });
       if (!ok) return { error: data?.error || 'Failed to create note' };
       return { note: data.note };
@@ -115,11 +190,11 @@ export const api = {
     }
   },
 
-  async updateNote(id: string, content: string): Promise<{ note?: Note; error?: string }> {
+  async updateNote(id: string, content: string, manualTags?: string[]): Promise<{ note?: Note; error?: string }> {
     try {
       const { ok, data } = await request(`/notes/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, manualTags }),
       });
       if (!ok) return { error: data?.error || 'Failed to update note' };
       return { note: data.note };
@@ -137,30 +212,32 @@ export const api = {
     }
   },
 
-  async getContacts(): Promise<UserContact[]> {
+  // Tags (Scoped strictly to user)
+  async getTags(): Promise<Tag[]> {
     try {
-      const { ok, data } = await request('/contacts');
-      if (!ok) throw new Error(data?.error || 'Failed to fetch contacts');
-      return data?.contacts || [];
+      const { ok, data } = await request('/tags');
+      if (!ok) return [];
+      return data?.tags || [];
     } catch (e) {
-      console.warn('[API Client] Failed to fetch contacts:', e);
       return [];
     }
   },
 
-  async createContact(displayName: string, email?: string): Promise<{ contact?: UserContact; error?: string }> {
+  // On-Demand AI Tag Suggestions (User has full control)
+  async suggestTags(content: string): Promise<{ tags: string[]; summary?: string; error?: string }> {
     try {
-      const { ok, data } = await request('/contacts', {
+      const { ok, data } = await request('/ai/suggest-tags', {
         method: 'POST',
-        body: JSON.stringify({ displayName, email }),
+        body: JSON.stringify({ content }),
       });
-      if (!ok) return { error: data?.error || 'Failed to add contact' };
-      return { contact: data.contact };
-    } catch (e) {
-      return { error: 'Network error connecting to backend API' };
+      if (!ok) return { tags: [], error: data?.error || 'Could not generate suggestions' };
+      return { tags: data.tags || [], summary: data.summary };
+    } catch (e: any) {
+      return { tags: [], error: e.message || 'AI service unavailable' };
     }
   },
 
+  // Image Upload
   async uploadImage(base64Image: string): Promise<{ url?: string; error?: string }> {
     try {
       const { ok, data } = await request('/upload', {

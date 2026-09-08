@@ -65,13 +65,13 @@ export const MentionChip: React.FC<MentionChipProps> = ({
   isSelected,
   onRemove,
 }) => {
-  const username = typeof mention === 'string' ? mention : mention.username;
-  const displayName = typeof mention === 'string' ? mention : mention.display_name;
-  const avatarUrl = typeof mention === 'object' ? mention.avatar_url : undefined;
+  const username = (typeof mention === 'string' ? mention : mention?.username) || '';
+  const displayName = (typeof mention === 'string' ? mention : mention?.display_name) || username;
+  const avatarUrl = typeof mention === 'object' ? mention?.avatar_url : undefined;
 
   return (
     <span
-      onClick={() => onClick && onClick(username)}
+      onClick={() => onClick && username && onClick(username)}
       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-150 cursor-pointer select-none active-press ${
         isSelected
           ? 'bg-mention-text text-white shadow-subtle'

@@ -1,77 +1,123 @@
-# 🚀 Mindshare Full-Stack Deployment Guide
+# 🚀 Mindshare Full-Stack Multi-User Deployment Guide
 
-This guide explains step-by-step how to deploy **Mindshare** as a fully decoupled application:
-1. **Database Layer**: Supabase (Free Tier Managed PostgreSQL)
-2. **Backend REST API Server**: Render / Railway (Node.js + Express)
-3. **Frontend Web App**: Vercel / Netlify (React + Vite + Tailwind)
-4. **AI Auto-Tagging Engine**: Groq Cloud API (Mixtral-8x7b)
+This guide explains step-by-step how to deploy **Mindshare** as a 100% free, private multi-user internal workspace for 5–10 team members:
 
----
-
-## 🏗️ Architecture Overview
-
-```
- ┌────────────────────────┐         ┌────────────────────────┐
- │   Vercel / Netlify     │         │    Render / Railway    │
- │                        │  HTTP   │                        │
- │   Frontend (React/Vite)│ ──────> │  Backend REST API      │
- │   https://mindshare.app│         │  (Node.js / Express)   │
- └────────────────────────┘         └───────────┬────────────┘
-                                                │
-                                    ┌───────────┴────────────┐
-                                    │                        │
-                                    ▼                        ▼
-                         ┌────────────────────┐   ┌────────────────────┐
-                         │      Supabase      │   │    Groq Cloud AI   │
-                         │ PostgreSQL Database│   │   Mixtral 8x7b     │
-                         └────────────────────┘   └────────────────────┘
-```
+1. **Database & Auth**: Supabase (Free Tier Managed PostgreSQL + Supabase Auth)
+2. **Backend API**: Render (Free Web Service)
+3. **24/7 Keep-Alive**: UptimeRobot (Free 5-minute ping to keep Render warm with zero cold-starts)
+4. **Frontend Web App**: Vercel (React + Vite + Tailwind)
+5. **On-Demand AI Tags**: Groq Cloud API (Llama 3 / Mixtral)
 
 ---
 
-## Step 1: Deploy Database (Supabase)
+## 🏗️ Architecture & Privacy Model
 
-1. Go to [supabase.com](https://supabase.com) and create a free project named `mindshare`.
-2. Open the **SQL Editor** in Supabase dashboard.
-3. Open `database/schema.sql` from this repository, copy the entire script, and click **Run**.
-4. Go to **Project Settings $\rightarrow$ API** and copy:
+```
+ ┌─────────────────────────┐          ┌─────────────────────────┐
+ │     Vercel (Frontend)   │          │     Render (Backend)    │
+ │                         │   HTTP   │                         │
+ │ - Google / Email Auth   │ ───────> │ - Stateless JWT Auth    │
+ │ - Notion/Apple UI       │ (Bearer) │ - Scoped Private Feeds  │
+ │ - "Tagged Me" Screen    │          │ - Real @mentions Engine │
+ └────────────┬────────────┘          └────────────┬────────────┘
+              │                                    │
+              │                                    │
+              ▼                                    ▼
+ ┌─────────────────────────┐          ┌─────────────────────────┐
+ │    Supabase Auth & DB   │          │   Groq AI (On-Demand)   │
+ │ - Multi-Tenant RLS      │ <─────── │ - User Controlled Tags  │
+ │ - Strict Private Tags   │          │ - Zero Junk Tag Spam    │
+ └─────────────────────────┘          └─────────────────────────┘
+              ▲
+              │
+ ┌────────────┴────────────┐
+ │  UptimeRobot (Keepalive)│
+ │ - Pings /health every 5m│
+ └─────────────────────────┘
+```
+
+---
+
+## Step 1: Database & Auth Setup (Supabase)
+
+1. Go to [supabase.com](https://supabase.com) and create a free project.
+2. Open the **SQL Editor** in your Supabase project.
+3. Open `database/migration_multiuser_auth.sql` from this repository, copy the entire script, and click **Run**.
+   - This creates `users`, `notes`, `tags`, `note_tags`, and `mentions` tables.
+   - Sets up multi-tenant Row Level Security (RLS) so users can **only** read their own notes and notes where they are tagged.
+   - Installs high-performance indexes for 10,000+ notes scale.
+4. **Authentication Configuration**:
+   - Go to **Authentication -> Providers -> Email**: Ensure Email provider is enabled. (Optional: Disable "Confirm email" if you want teammates to log in immediately without waiting for confirmation emails).
+   - Go to **Authentication -> Providers -> Google**: (Optional) Add your Google Cloud Client ID & Secret to enable 1-click Google Sign-In.
+5. Go to **Project Settings -> API** and copy:
    - `Project URL`
    - `anon public key`
 
 ---
 
-## Step 2: Deploy Backend REST API Server (Render or Railway)
+## Step 2: Deploy Backend API (Render Free Tier)
 
-### Option A: Render (Free Tier)
 1. Push your repository to GitHub.
-2. Go to [render.com](https://render.com) and create a **New Web Service**.
+2. Go to [render.com](https://render.com) and click **New -> Web Service**.
 3. Connect your GitHub repository.
-4. Set **Root Directory**: `server`
-5. Set **Build Command**: `npm install`
-6. Set **Start Command**: `npx tsx index.ts`
-7. Add Environment Variables:
+4. Set the following options:
+   - **Name**: `mindshare-backend`
+   - **Root Directory**: `server`
+   - **Environment**: `Node`
+   - **Build Command**: `npm install`
+   - **Start Command**: `npx tsx index.ts`
+   - **Instance Type**: `Free`
+5. Add the **Environment Variables**:
    - `PORT`: `3001`
-   - `GROQ_API_KEY`: `gsk_your_groq_api_key`
-   - `DATABASE_URL`: Your Supabase connection string
-8. Click **Create Web Service**. Your backend API will be live at `https://mindshare-backend.onrender.com`.
+   - `SUPABASE_URL`: Your Supabase Project URL
+   - `SUPABASE_ANON_KEY`: Your Supabase anon key
+   - `GROQ_API_KEY`: Your Groq API key (`gsk_...`)
+   - `CLOUDINARY_CLOUD_NAME`: `qxjuwofk`
+   - `CLOUDINARY_UPLOAD_PRESET`: `mindshare_preset`
+6. Click **Deploy Web Service**.
+   Your backend will be live at `https://mindshare-backend.onrender.com`.
 
 ---
 
-## Step 3: Deploy Frontend Web App (Vercel)
+## Step 3: Keep Render Warm 24/7 (UptimeRobot - Free)
 
-1. Go to [vercel.com](https://vercel.com) and import your GitHub repository.
-2. Set **Framework Preset**: `Vite`
-3. Add Environment Variables:
-   - `VITE_API_BASE_URL`: `https://mindshare-backend.onrender.com` (Your backend URL from Step 2)
-   - `VITE_SUPABASE_URL`: `https://your-project.supabase.co`
-   - `VITE_SUPABASE_ANON_KEY`: `your-anon-key`
-   - `VITE_GROQ_API_KEY`: `gsk_your_groq_key`
-4. Click **Deploy**. Vercel will build and publish your frontend live at `https://mindshare.vercel.app`.
+Render's free tier spins down after 15 minutes of inactivity. To keep your team's workspace fast and awake 24/7:
+
+1. Go to [uptimerobot.com](https://uptimerobot.com) and sign up for free.
+2. Click **Add New Monitor**.
+3. Set:
+   - **Monitor Type**: `HTTP(s)`
+   - **Friendly Name**: `Mindshare Backend Keepalive`
+   - **URL**: `https://mindshare-backend.onrender.com/health`
+   - **Monitoring Interval**: `5 minutes`
+4. Click **Create Monitor**.
+   *Render will now remain awake 24/7 without any cold start delays!*
 
 ---
 
-## Step 4: Verify Full-Stack Deployment
+## Step 4: Deploy Frontend Web App (Vercel)
 
-1. Open your Vercel URL `https://mindshare.vercel.app`.
-2. Capture a new thought with `#tags` and `@people`.
-3. Verify that the frontend makes REST API calls to your Render backend and saves to your Supabase PostgreSQL database.
+1. Go to [vercel.com](https://vercel.com) and click **Add New -> Project**.
+2. Import your GitHub repository.
+3. Set **Framework Preset**: `Vite`.
+4. Add the following **Environment Variables**:
+   - `VITE_API_BASE_URL`: `https://mindshare-backend.onrender.com/api` (Your Render URL from Step 2 with `/api`)
+   - `VITE_SUPABASE_URL`: Your Supabase Project URL
+   - `VITE_SUPABASE_ANON_KEY`: Your Supabase anon key
+   - `VITE_CLOUDINARY_CLOUD_NAME`: `qxjuwofk`
+   - `VITE_CLOUDINARY_UPLOAD_PRESET`: `mindshare_preset`
+5. Click **Deploy**.
+   Vercel will build and publish your app live at `https://mindshare.vercel.app`.
+
+---
+
+## Step 5: Team Onboarding Flow
+
+1. Teammates open `https://mindshare.vercel.app`.
+2. Sign in using **Continue with Google** or **Create an account with work email**.
+3. On first login, a prompt asks to claim their team handle: `@username` (e.g. `@alex`, `@sarah`).
+4. Once claimed:
+   - They appear in the **Teammates** directory.
+   - Any teammate can tag them in thoughts by typing `@username`.
+   - When tagged, a badge appears on their **Tagged Me** inbox tab.
+   - All `#tags` remain 100% private to each user.

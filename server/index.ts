@@ -1,15 +1,13 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
-import { supabase, isSupabaseConfigured, DEMO_USER_ID, ensureDemoUserExists } from './supabase.js';
+import { supabase, isSupabaseConfigured } from './supabase.js';
 import { generateAITags } from './groq.js';
-import { parseNoteContent } from '../src/lib/parser.ts';
-import { startAIWorker } from './aiWorker.js';
+import { parseNoteContent } from '../src/lib/parser.js';
 import { uploadToCloudinary, deleteFromCloudinary } from './cloudinary.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const APP_PASSWORD = process.env.APP_PASSWORD || 'mindshare123';
 
 app.use(cors({
   origin: '*',
@@ -27,262 +25,183 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-interface Contact {
-  id: string;
-  display_name: string;
-  username: string;
-  contact_email: string;
-  is_registered: boolean;
-  status: 'active' | 'invited' | 'pending';
+// Authenticated Request interface
+interface AuthRequest extends Request {
+  user?: any;
+  userId?: string;
+  userEmail?: string;
 }
 
-interface NoteTag {
-  id: string;
-  name: string;
-  is_manual: boolean;
-  source?: 'manual' | 'ai_suggested' | 'ai_confirmed';
-  confidence_score?: number;
-}
-
-interface Note {
-  id: string;
-  user_id: string;
-  content: string;
-  created_at: string;
-  updated_at: string;
-  tags: NoteTag[];
-  mentions: Contact[];
-  is_processing_ai?: boolean;
-}
-
-// Single-user password auth (in-memory sessions)
-const sessions = new Map<string, number>();
-const SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
-
-function safeEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  if (ba.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
-}
-
-function requireAuth(req: Request, res: Response, next: NextFunction) {
+// Stateless Supabase JWT Authentication Middleware
+async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
-  const expiresAt = sessions.get(token);
-  if (!expiresAt || expiresAt < Date.now()) {
-    if (expiresAt) sessions.delete(token);
-    return res.status(401).json({ error: 'Unauthorized' });
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: Missing token' });
   }
-  next();
-}
 
-function mapNoteRow(n: any): Note {
-  const tags: NoteTag[] = (n.note_tags || [])
-    .filter((nt: any) => nt.tags)
-    .map((nt: any) => ({
-      id: nt.tags.id,
-      name: nt.tags.name,
-      is_manual: nt.is_manual ?? true,
-      source: nt.source || (nt.is_manual ? 'manual' : 'ai_suggested'),
-      confidence_score: nt.confidence_score ?? 1.0,
-    }));
+  if (!supabase) {
+    return res.status(500).json({ error: 'Supabase client not initialized' });
+  }
 
-  const mentions: Contact[] = (n.mentions || [])
-    .filter((m: any) => m.user_contacts)
-    .map((m: any) => ({
-      id: m.user_contacts.id,
-      display_name: m.user_contacts.display_name,
-      username: m.user_contacts.username,
-      contact_email: m.user_contacts.contact_email,
-      is_registered: true,
-      status: 'active',
-    }));
-
-  return {
-    id: n.id,
-    user_id: n.user_id || DEMO_USER_ID,
-    content: n.content,
-    created_at: n.created_at,
-    updated_at: n.updated_at,
-    tags,
-    mentions,
-  };
-}
-
-// Batch helper: Upsert tags and link junctions efficiently
-async function batchInsertTagsAndJunctions(noteId: string, tagNames: string[], isManual = true) {
-  if (!supabase || tagNames.length === 0) return;
-
-  for (const name of tagNames) {
-    const cleanName = name.toLowerCase().trim();
-    if (cleanName.length < 2) continue;
-
-    // Fetch existing tag or create new one
-    const { data: existingTag } = await supabase
-      .from('tags')
-      .select('id')
-      .eq('user_id', DEMO_USER_ID)
-      .eq('name', cleanName)
-      .maybeSingle();
-
-    let tagId = existingTag?.id;
-
-    if (!tagId) {
-      const { data: newTag, error: tagErr } = await supabase
-        .from('tags')
-        .insert({ user_id: DEMO_USER_ID, name: cleanName })
-        .select('id')
-        .maybeSingle();
-
-      if (!tagErr && newTag?.id) {
-        tagId = newTag.id;
-      } else {
-        // Fallback check if created concurrently
-        const { data: retryTag } = await supabase
-          .from('tags')
-          .select('id')
-          .eq('user_id', DEMO_USER_ID)
-          .eq('name', cleanName)
-          .maybeSingle();
-        tagId = retryTag?.id;
-      }
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+      return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
-    if (tagId) {
-      await supabase
-        .from('note_tags')
-        .upsert({
-          note_id: noteId,
-          tag_id: tagId,
-          is_manual: isManual,
-          source: isManual ? 'manual' : 'ai_suggested',
-          confidence_score: isManual ? 1.0 : 0.85,
-        }, { onConflict: 'note_id,tag_id' });
-    }
+    req.user = user;
+    req.userId = user.id;
+    req.userEmail = user.email;
+    next();
+  } catch (err: any) {
+    return res.status(401).json({ error: `Auth Error: ${err.message}` });
   }
 }
 
-// Batch helper: Insert mentions
-async function batchInsertMentions(noteId: string, contactIds: string[]) {
-  if (!supabase || contactIds.length === 0) return;
-  const rows = contactIds.map((contact_id) => ({ note_id: noteId, contact_id }));
-  await supabase.from('mentions').upsert(rows, { onConflict: 'note_id,contact_id' });
-}
-
-// Health check
+// Health check endpoint (used by UptimeRobot to keep Render service warm 24/7)
 app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'online', service: 'Mindshare Scalable Backend API', timestamp: new Date() });
+  res.json({ status: 'online', service: 'Mindshare Multi-User Engine', timestamp: new Date() });
 });
 
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'online', service: 'Mindshare Scalable Backend API', timestamp: new Date() });
+  res.json({ status: 'online', service: 'Mindshare Multi-User Engine', timestamp: new Date() });
 });
 
-// Auth
-app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { password } = req.body || {};
-  if (typeof password !== 'string' || !password || !safeEqual(password, APP_PASSWORD)) {
-    return res.status(401).json({ error: 'Invalid password' });
-  }
-  const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, Date.now() + SESSION_TTL);
-  res.json({ token, user: { id: DEMO_USER_ID } });
+// Protect all /api routes below with requireAuth
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  if (req.path === '/health') return next();
+  return requireAuth(req as AuthRequest, res, next);
 });
 
-app.post('/api/auth/logout', requireAuth, (req: Request, res: Response) => {
-  const header = req.headers.authorization || '';
-  const token = header.slice(7);
-  sessions.delete(token);
-  res.json({ success: true });
-});
+// ========================================================
+// USER & PROFILE ENDPOINTS
+// ========================================================
 
-app.get('/api/auth/me', requireAuth, (_req: Request, res: Response) => {
-  res.json({ user: { id: DEMO_USER_ID } });
-});
+// Get current user profile
+app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ error: 'Server error' });
 
-// Protect all /api endpoints below
-app.use('/api', requireAuth);
+  const { data: userProfile, error } = await supabase
+    .from('users')
+    .select('id, email, full_name, username, avatar_url, status')
+    .eq('id', req.userId)
+    .maybeSingle();
 
-// Contacts
-app.get('/api/contacts', async (_req: Request, res: Response) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
-
-  const { data, error } = await supabase
-    .from('user_contacts')
-    .select('*')
-    .is('deleted_at', null)
-    .order('created_at', { ascending: false });
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  const contacts: Contact[] = (data || []).map((c: any) => ({
-    id: c.id,
-    display_name: c.display_name,
-    username: c.username,
-    contact_email: c.contact_email,
-    is_registered: c.is_registered ?? true,
-    status: 'active',
-  }));
-
-  res.json({ contacts });
-});
-
-app.post('/api/contacts', async (req: Request, res: Response) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
-
-  const { displayName, email } = req.body || {};
-  if (!displayName || typeof displayName !== 'string') {
-    return res.status(400).json({ error: 'Display name required' });
+  if (error) {
+    return res.status(500).json({ error: error.message });
   }
 
-  const username = displayName.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (username.length < 2) {
-    return res.status(400).json({ error: 'Username must be at least 2 alphanumeric characters.' });
+  if (userProfile) {
+    return res.json({ user: userProfile });
   }
 
+  // Self-heal: Provision user row if auth trigger was bypassed
+  const email = req.userEmail || '';
+  const fallbackUsername = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '') || `user_${req.userId.slice(0, 6)}`;
+  const fullName = req.user?.user_metadata?.full_name || req.user?.user_metadata?.name || fallbackUsername;
+  const avatarUrl = req.user?.user_metadata?.avatar_url || null;
+
+  const { data: createdUser, error: insertErr } = await supabase
+    .from('users')
+    .upsert({
+      id: req.userId,
+      email,
+      full_name: fullName,
+      username: fallbackUsername,
+      avatar_url: avatarUrl,
+      status: 'active',
+    })
+    .select('id, email, full_name, username, avatar_url, status')
+    .single();
+
+  if (insertErr) {
+    return res.status(500).json({ error: insertErr.message });
+  }
+
+  return res.json({ user: createdUser });
+});
+
+// Update profile (e.g. claim / change @username and display name)
+app.put('/api/users/profile', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ error: 'Server error' });
+
+  const { username, fullName, avatarUrl } = req.body || {};
+
+  const cleanUsername = (username || '').toLowerCase().trim().replace(/[^a-z0-9_]/g, '');
+  if (cleanUsername.length < 2 || cleanUsername.length > 24) {
+    return res.status(400).json({ error: 'Username must be 2-24 alphanumeric characters or underscores.' });
+  }
+
+  // Verify username uniqueness
   const { data: existing } = await supabase
-    .from('user_contacts')
+    .from('users')
     .select('id')
-    .eq('username', username)
+    .eq('username', cleanUsername)
+    .neq('id', req.userId)
     .maybeSingle();
 
   if (existing) {
-    return res.status(400).json({ error: `Contact @${username} already exists.` });
+    return res.status(400).json({ error: `Username @${cleanUsername} is already taken by a teammate.` });
   }
 
-  const id = crypto.randomUUID();
-  const contactEmail = email || `${username}@company.com`;
-
-  const { error: insertErr } = await supabase.from('user_contacts').insert({
-    id,
-    owner_user_id: DEMO_USER_ID,
-    display_name: displayName,
-    username,
-    contact_email: contactEmail,
-    is_registered: true,
-  });
-
-  if (insertErr) {
-    return res.status(500).json({ error: `Database Error: ${insertErr.message}` });
-  }
-
-  const contact: Contact = {
-    id,
-    display_name: displayName,
-    username,
-    contact_email: contactEmail,
-    is_registered: true,
-    status: 'active',
+  const updates: any = {
+    username: cleanUsername,
+    updated_at: new Date().toISOString(),
   };
+  if (fullName !== undefined) updates.full_name = fullName.trim();
+  if (avatarUrl !== undefined) updates.avatar_url = avatarUrl;
 
-  res.status(201).json({ contact, success: true });
+  const { data: updated, error } = await supabase
+    .from('users')
+    .update(updates)
+    .eq('id', req.userId)
+    .select('id, email, full_name, username, avatar_url, status')
+    .single();
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  res.json({ user: updated, success: true });
 });
 
-// Image Upload Endpoint (Cloudinary integration)
-app.post('/api/upload', async (req: Request, res: Response) => {
+// Team directory endpoint: Returns all active registered teammates
+app.get('/api/users/directory', async (_req: AuthRequest, res: Response) => {
+  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('id, username, full_name, email, avatar_url')
+    .eq('status', 'active')
+    .order('full_name', { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.json({ users: data || [] });
+});
+
+// ========================================================
+// ON-DEMAND AI TAG SUGGESTIONS (USER CONTROLLED)
+// ========================================================
+app.post('/api/ai/suggest-tags', async (req: AuthRequest, res: Response) => {
+  const { content } = req.body || {};
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ error: 'Content required for AI suggestions', tags: [] });
+  }
+
+  try {
+    const aiResult = await generateAITags(content.trim());
+    return res.json({ tags: aiResult.tags || [], summary: aiResult.summary, success: true });
+  } catch (err: any) {
+    console.error('[AI Suggestion Error]:', err.message);
+    return res.status(500).json({ error: 'Failed to generate suggestions', tags: [] });
+  }
+});
+
+// Cloudinary Image Upload
+app.post('/api/upload', async (req: AuthRequest, res: Response) => {
   const { image } = req.body || {};
   if (!image || typeof image !== 'string') {
     return res.status(400).json({ error: 'Image data (base64 or URL) is required' });
@@ -296,15 +215,113 @@ app.post('/api/upload', async (req: Request, res: Response) => {
   res.json({ url: result.secure_url || result.url, success: true });
 });
 
-// Scalable Paginated Notes Endpoint (Handles 10,000+ Notes Scale)
-app.get('/api/notes', async (req: Request, res: Response) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+// ========================================================
+// MULTI-TENANT NOTES & TAGS APIS
+// ========================================================
 
-  const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
-  const offset = parseInt(req.query.offset as string) || 0;
+function mapNoteRow(n: any): any {
+  const tags = (n.note_tags || [])
+    .filter((nt: any) => nt.tags)
+    .map((nt: any) => ({
+      id: nt.tags.id,
+      name: nt.tags.name,
+      is_manual: nt.is_manual ?? true,
+      source: nt.source || 'manual',
+    }));
+
+  const mentions = (n.mentions || [])
+    .filter((m: any) => m.users)
+    .map((m: any) => ({
+      id: m.users.id,
+      display_name: m.users.full_name || m.users.username,
+      username: m.users.username,
+      contact_email: m.users.email,
+      avatar_url: m.users.avatar_url,
+      is_registered: true,
+      status: 'active',
+    }));
+
+  const author = n.users
+    ? {
+        id: n.users.id,
+        username: n.users.username,
+        full_name: n.users.full_name,
+        avatar_url: n.users.avatar_url,
+      }
+    : undefined;
+
+  return {
+    id: n.id,
+    user_id: n.user_id,
+    author,
+    content: n.content,
+    created_at: n.created_at,
+    updated_at: n.updated_at,
+    tags,
+    mentions,
+  };
+}
+
+// Helper: Insert/Link tags strictly under user's private account
+async function batchInsertTagsAndJunctions(userId: string, noteId: string, tagNames: string[], isManual = true) {
+  if (!supabase || tagNames.length === 0) return;
+
+  for (const name of tagNames) {
+    const cleanName = name.toLowerCase().trim();
+    if (cleanName.length < 2) continue;
+
+    // Fetch existing tag for this user or create
+    const { data: existingTag } = await supabase
+      .from('tags')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('name', cleanName)
+      .maybeSingle();
+
+    let tagId = existingTag?.id;
+
+    if (!tagId) {
+      const { data: newTag } = await supabase
+        .from('tags')
+        .insert({ user_id: userId, name: cleanName })
+        .select('id')
+        .maybeSingle();
+
+      tagId = newTag?.id;
+    }
+
+    if (tagId) {
+      await supabase
+        .from('note_tags')
+        .upsert({
+          note_id: noteId,
+          tag_id: tagId,
+          is_manual: isManual,
+          source: isManual ? 'manual' : 'ai_suggested',
+          confidence_score: 1.0,
+        }, { onConflict: 'note_id,tag_id' });
+    }
+  }
+}
+
+// Helper: Insert real teammate mentions
+async function batchInsertMentions(noteId: string, userIds: string[]) {
+  if (!supabase || userIds.length === 0) return;
+  const rows = userIds.map((userId) => ({ note_id: noteId, user_id: userId }));
+  await supabase.from('mentions').upsert(rows, { onConflict: 'note_id,user_id' });
+}
+
+// Get Notes with strict multi-user visibility & feeds
+app.get('/api/notes', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+
+  const userId = req.userId;
+  const feed = (req.query.feed as string) || 'all'; // 'all' | 'tagged_me' | 'untagged'
   const tagFilter = req.query.tag as string;
   const mentionFilter = req.query.mention as string;
   const searchQuery = ((req.query.q || req.query.search || '') as string).trim();
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+  const offset = parseInt(req.query.offset as string) || 0;
 
   let query = supabase
     .from('notes')
@@ -314,23 +331,49 @@ app.get('/api/notes', async (req: Request, res: Response) => {
       content,
       created_at,
       updated_at,
+      users!notes_user_id_fkey ( id, username, full_name, avatar_url ),
       note_tags (
         is_manual,
         source,
-        confidence_score,
         tags ( id, name )
       ),
       mentions (
-        contact_id,
-        user_contacts ( id, display_name, username, contact_email )
+        user_id,
+        users ( id, display_name:full_name, username, contact_email:email, avatar_url )
       )
     `, { count: 'exact' })
     .is('deleted_at', null);
 
+  if (feed === 'tagged_me') {
+    // Fetch notes authored by others where current user was mentioned
+    const { data: mentionRows } = await supabase
+      .from('mentions')
+      .select('note_id')
+      .eq('user_id', userId);
+
+    const noteIds = (mentionRows || []).map((m: any) => m.note_id);
+    if (noteIds.length === 0) {
+      return res.json({ notes: [], pagination: { total: 0, limit, offset, has_more: false }, total: 0 });
+    }
+
+    query = query.in('id', noteIds).neq('user_id', userId);
+  } else {
+    // Personal notes feed: Only notes authored by current user
+    query = query.eq('user_id', userId);
+  }
+
+  // Full-Text Search with operator sanitization
   if (searchQuery) {
-    // Perform PostgreSQL Full-Text Search on GIN fts index
-    const formattedQuery = searchQuery.split(/\s+/).filter(Boolean).join(' & ');
-    query = query.textSearch('fts', formattedQuery, { config: 'english' });
+    const cleanSearch = searchQuery
+      .replace(/[!&|():*]/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .join(' & ');
+
+    if (cleanSearch) {
+      query = query.textSearch('fts', cleanSearch, { config: 'english' });
+    }
   }
 
   query = query
@@ -344,15 +387,18 @@ app.get('/api/notes', async (req: Request, res: Response) => {
     return res.status(500).json({ error: error.message });
   }
 
-  let notes: Note[] = (data || []).map(mapNoteRow);
+  let notes = (data || []).map(mapNoteRow);
 
-  // In-memory filter fallback for tag/mention parameter matching
+  // Apply in-memory tag/mention/untagged filter refinements
+  if (feed === 'untagged') {
+    notes = notes.filter((n) => n.tags.length === 0);
+  }
   if (tagFilter) {
-    notes = notes.filter((n) => n.tags.some((t) => t.name.toLowerCase() === tagFilter.toLowerCase()));
+    notes = notes.filter((n) => n.tags.some((t: any) => t.name.toLowerCase() === tagFilter.toLowerCase()));
   }
   if (mentionFilter) {
     notes = notes.filter((n) =>
-      n.mentions.some((m) => m.username.toLowerCase() === mentionFilter.toLowerCase())
+      n.mentions.some((m: any) => m.username.toLowerCase() === mentionFilter.toLowerCase())
     );
   }
 
@@ -368,164 +414,117 @@ app.get('/api/notes', async (req: Request, res: Response) => {
   });
 });
 
-// High-Performance Note Creation (Atomic / Batch + Async Queue)
-app.post('/api/notes', async (req: Request, res: Response) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+// Count unread / total mentions for the user (to show badge in sidebar)
+app.get('/api/notes/mentions-count', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ count: 0 });
 
-  const { content } = req.body || {};
+  const { count, error } = await supabase
+    .from('mentions')
+    .select('note_id', { count: 'exact', head: true })
+    .eq('user_id', req.userId);
+
+  if (error) return res.status(500).json({ count: 0 });
+  res.json({ count: count || 0 });
+});
+
+// Create Note
+app.post('/api/notes', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+
+  const { content, manualTags } = req.body || {};
   const parsed = parseNoteContent(content || '');
   if (!parsed.isValid) {
     return res.status(400).json({ error: parsed.errors[0] || 'Invalid note content.', success: false });
   }
 
-  // 1. Efficient targeted check for mentioned usernames
-  let matchedContacts: Contact[] = [];
+  // Combine tags from content text with any explicitly selected tags
+  const combinedTags = Array.from(new Set([
+    ...parsed.tags,
+    ...(Array.isArray(manualTags) ? manualTags : [])
+  ].map((t) => t.toLowerCase().trim())));
+
+  // Resolve mentioned @usernames to real registered teammate UUIDs
+  let mentionedUserIds: string[] = [];
+  let matchedTeammates: any[] = [];
+
   if (parsed.mentions.length > 0) {
-    const { data: contactsData } = await supabase
-      .from('user_contacts')
-      .select('*')
-      .in('username', parsed.mentions.map((m) => m.toLowerCase()))
-      .is('deleted_at', null);
+    const { data: usersData } = await supabase
+      .from('users')
+      .select('id, username, full_name, email, avatar_url')
+      .in('username', parsed.mentions.map((m) => m.toLowerCase()));
 
-    const foundMap = new Map((contactsData || []).map((c: any) => [c.username.toLowerCase(), c]));
-    const unknownMentions = parsed.mentions.filter((m) => !foundMap.has(m.toLowerCase()));
-
-    if (unknownMentions.length > 0) {
-      return res.status(400).json({
-        error: `@${unknownMentions[0]} isn't a contact yet. Add them first in People directory.`,
-        success: false,
-      });
-    }
-
-    matchedContacts = (contactsData || []).map((c: any) => ({
-      id: c.id,
-      display_name: c.display_name,
-      username: c.username,
-      contact_email: c.contact_email,
-      is_registered: c.is_registered ?? true,
-      status: 'active',
-    }));
+    matchedTeammates = usersData || [];
+    mentionedUserIds = matchedTeammates.map((u) => u.id);
   }
 
-  // 2. Try Atomic RPC Procedure `create_note_with_relations` first
-  const contactIds = matchedContacts.map((c) => c.id);
-  const { data: rpcNoteId, error: rpcErr } = await supabase.rpc('create_note_with_relations', {
-    p_user_id: DEMO_USER_ID,
-    p_content: content,
-    p_tags: parsed.tags,
-    p_contact_ids: contactIds,
+  const noteId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  const { error: noteErr } = await supabase.from('notes').insert({
+    id: noteId,
+    user_id: req.userId,
+    content,
+    created_at: now,
+    updated_at: now,
   });
 
-  let noteId = rpcNoteId;
-
-  if (rpcErr || !noteId) {
-    // Fallback: Pure JS Batch Insertion if RPC is not present in live DB
-    noteId = crypto.randomUUID();
-    const now = new Date().toISOString();
-
-    const { error: noteErr } = await supabase.from('notes').insert({
-      id: noteId,
-      user_id: DEMO_USER_ID,
-      content,
-      created_at: now,
-      updated_at: now,
-    });
-
-    if (noteErr) {
-      return res.status(500).json({ error: `Could not save note: ${noteErr.message}`, success: false });
-    }
-
-    // Batch insert manual tags & mentions
-    await batchInsertTagsAndJunctions(noteId, parsed.tags, true);
-    await batchInsertMentions(noteId, contactIds);
-
-    // Enqueue persistent AI job into ai_jobs queue table
-    await supabase.from('ai_jobs').insert({
-      note_id: noteId,
-      user_id: DEMO_USER_ID,
-      status: 'pending',
-      payload: { content },
-    }).catch(() => null);
-
-    // Immediate fallback AI tag generation call
-    generateAITags(content)
-      .then(async (aiResult) => {
-        const existingNames = new Set(parsed.tags.map((t) => t.toLowerCase()));
-        const newAITags = aiResult.tags.filter((t) => !existingNames.has(t.toLowerCase()));
-        if (newAITags.length > 0) {
-          await batchInsertTagsAndJunctions(noteId, newAITags, false);
-        }
-      })
-      .catch((err) => console.error('AI Tagging error:', err));
+  if (noteErr) {
+    return res.status(500).json({ error: `Could not save note: ${noteErr.message}`, success: false });
   }
 
-  const tags: NoteTag[] = parsed.tags.map((t) => ({
-    id: `t-${t.toLowerCase()}`,
-    name: t.toLowerCase(),
+  // Batch insert personal tags & real teammate mentions
+  await batchInsertTagsAndJunctions(req.userId, noteId, combinedTags, true);
+  await batchInsertMentions(noteId, mentionedUserIds);
+
+  const tags = combinedTags.map((t) => ({
+    id: `t-${t}`,
+    name: t,
     is_manual: true,
   }));
 
-  const note: Note = {
+  const mentions = matchedTeammates.map((u) => ({
+    id: u.id,
+    display_name: u.full_name || u.username,
+    username: u.username,
+    contact_email: u.email,
+    avatar_url: u.avatar_url,
+    is_registered: true,
+    status: 'active',
+  }));
+
+  const note = {
     id: noteId,
-    user_id: DEMO_USER_ID,
+    user_id: req.userId,
     content,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
+    created_at: now,
+    updated_at: now,
     tags,
-    mentions: matchedContacts,
-    is_processing_ai: true,
+    mentions,
   };
 
   return res.status(201).json({ note, success: true });
 });
 
-// Update Note
-app.put('/api/notes/:id', async (req: Request, res: Response) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+// Update Note (User can only update their own notes)
+app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
   const { id } = req.params;
-  const { content } = req.body || {};
+  const { content, manualTags } = req.body || {};
 
   const parsed = parseNoteContent(content || '');
   if (!parsed.isValid) {
     return res.status(400).json({ error: parsed.errors[0] || 'Invalid note content.', success: false });
   }
 
-  // Targeted check for mentioned contacts
-  let matchedContacts: Contact[] = [];
-  if (parsed.mentions.length > 0) {
-    const { data: contactsData } = await supabase
-      .from('user_contacts')
-      .select('*')
-      .in('username', parsed.mentions.map((m) => m.toLowerCase()))
-      .is('deleted_at', null);
-
-    const foundMap = new Map((contactsData || []).map((c: any) => [c.username.toLowerCase(), c]));
-    const unknownMentions = parsed.mentions.filter((m) => !foundMap.has(m.toLowerCase()));
-
-    if (unknownMentions.length > 0) {
-      return res.status(400).json({
-        error: `@${unknownMentions[0]} isn't a contact yet. Add them first in People directory.`,
-        success: false,
-      });
-    }
-
-    matchedContacts = (contactsData || []).map((c: any) => ({
-      id: c.id,
-      display_name: c.display_name,
-      username: c.username,
-      contact_email: c.contact_email,
-      is_registered: c.is_registered ?? true,
-      status: 'active',
-    }));
-  }
-
   const now = new Date().toISOString();
 
+  // Verify ownership
   const { data: updatedRow, error: updateErr } = await supabase
     .from('notes')
     .update({ content, updated_at: now })
     .eq('id', id)
+    .eq('user_id', req.userId)
     .select('id, content, created_at, updated_at')
     .maybeSingle();
 
@@ -533,49 +532,82 @@ app.put('/api/notes/:id', async (req: Request, res: Response) => {
     return res.status(500).json({ error: `Could not update note: ${updateErr.message}`, success: false });
   }
   if (!updatedRow) {
-    return res.status(404).json({ error: 'Note not found', success: false });
+    return res.status(404).json({ error: 'Note not found or you do not have permission to edit it.', success: false });
   }
 
-  // Resync relations safely
+  const combinedTags = Array.from(new Set([
+    ...parsed.tags,
+    ...(Array.isArray(manualTags) ? manualTags : [])
+  ].map((t) => t.toLowerCase().trim())));
+
+  let mentionedUserIds: string[] = [];
+  let matchedTeammates: any[] = [];
+
+  if (parsed.mentions.length > 0) {
+    const { data: usersData } = await supabase
+      .from('users')
+      .select('id, username, full_name, email, avatar_url')
+      .in('username', parsed.mentions.map((m) => m.toLowerCase()));
+
+    matchedTeammates = usersData || [];
+    mentionedUserIds = matchedTeammates.map((u) => u.id);
+  }
+
+  // Re-sync relations
   await supabase.from('note_tags').delete().eq('note_id', id);
   await supabase.from('mentions').delete().eq('note_id', id);
-  await batchInsertTagsAndJunctions(id, parsed.tags, true);
-  await batchInsertMentions(id, matchedContacts.map((c) => c.id));
 
-  const tags: NoteTag[] = parsed.tags.map((t) => ({
-    id: `t-${t.toLowerCase()}`,
-    name: t.toLowerCase(),
+  await batchInsertTagsAndJunctions(req.userId, id, combinedTags, true);
+  await batchInsertMentions(id, mentionedUserIds);
+
+  const tags = combinedTags.map((t) => ({
+    id: `t-${t}`,
+    name: t,
     is_manual: true,
   }));
 
-  const note: Note = {
+  const mentions = matchedTeammates.map((u) => ({
+    id: u.id,
+    display_name: u.full_name || u.username,
+    username: u.username,
+    contact_email: u.email,
+    avatar_url: u.avatar_url,
+    is_registered: true,
+    status: 'active',
+  }));
+
+  const note = {
     id: updatedRow.id,
-    user_id: DEMO_USER_ID,
+    user_id: req.userId,
     content: updatedRow.content,
     created_at: updatedRow.created_at,
     updated_at: updatedRow.updated_at,
     tags,
-    mentions: matchedContacts,
+    mentions,
   };
 
   res.json({ note, success: true });
 });
 
-// Delete Note
-// Delete Note & Cloudinary Images
-app.delete('/api/notes/:id', async (req: Request, res: Response) => {
-  if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+// Delete Note (User can only delete their own notes)
+app.delete('/api/notes/:id', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
   const { id } = req.params;
 
-  // 1. Fetch note content to extract attached Cloudinary image URLs
+  // 1. Fetch note content to extract Cloudinary images
   const { data: noteRow } = await supabase
     .from('notes')
     .select('content')
     .eq('id', id)
+    .eq('user_id', req.userId)
     .maybeSingle();
 
-  if (noteRow?.content) {
+  if (!noteRow) {
+    return res.status(404).json({ error: 'Note not found or unauthorized', success: false });
+  }
+
+  if (noteRow.content) {
     const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
     let match;
     while ((match = imageRegex.exec(noteRow.content)) !== null) {
@@ -588,18 +620,54 @@ app.delete('/api/notes/:id', async (req: Request, res: Response) => {
     }
   }
 
-  // 2. Delete Note (PostgreSQL ON DELETE CASCADE automatically deletes note_tags, mentions, and ai_jobs)
-  const { error, count } = await supabase.from('notes').delete({ count: 'exact' }).eq('id', id);
+  // 2. Delete Note
+  const { error } = await supabase
+    .from('notes')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', req.userId);
 
   if (error) {
     return res.status(500).json({ error: error.message, success: false });
   }
 
-  if (!count || count === 0) {
-    return res.status(404).json({ error: 'Note not found', success: false });
-  }
-
   res.json({ success: true });
+});
+
+// Get User's Private Tags with Note Counts
+app.get('/api/tags', async (req: AuthRequest, res: Response) => {
+  if (!supabase || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+
+  const { data: userTags, error } = await supabase
+    .from('tags')
+    .select('id, name, created_at')
+    .eq('user_id', req.userId)
+    .order('name', { ascending: true });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Get note counts per tag for this user
+  const { data: noteTags } = await supabase
+    .from('note_tags')
+    .select(`
+      tag_id,
+      notes!inner ( user_id )
+    `)
+    .eq('notes.user_id', req.userId);
+
+  const countMap: Record<string, number> = {};
+  (noteTags || []).forEach((nt: any) => {
+    countMap[nt.tag_id] = (countMap[nt.tag_id] || 0) + 1;
+  });
+
+  const tags = (userTags || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    count: countMap[t.id] || 0,
+    created_at: t.created_at,
+  }));
+
+  res.json({ tags });
 });
 
 if (!isSupabaseConfigured) {
@@ -607,8 +675,5 @@ if (!isSupabaseConfigured) {
 }
 
 app.listen(PORT, () => {
-  console.log(`⚡ Mindshare Scalable Backend API Server running on port ${PORT}`);
-  ensureDemoUserExists();
-  // Start persistent background AI Queue worker polling
-  startAIWorker(5000);
+  console.log(`⚡ Mindshare Multi-User Engine running on port ${PORT}`);
 });

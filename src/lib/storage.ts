@@ -1,12 +1,14 @@
-import { Note, Tag, UserContact } from './types';
+import { Note, Tag, User } from './types';
 import { api } from './api';
 
 type StorageListener = () => void;
 const listeners = new Set<StorageListener>();
 
-// In-Memory UI cache — the Express server + Supabase are the source of truth.
 let memoryNotes: Note[] = [];
-let memoryContacts: UserContact[] = [];
+let memoryTags: Tag[] = [];
+let memoryTeammates: User[] = [];
+let memoryMentionsCount = 0;
+let currentFeed: 'all' | 'tagged_me' | 'untagged' = 'all';
 
 function notifyListeners() {
   listeners.forEach((fn) => fn());
@@ -23,57 +25,102 @@ export function getNotes(): Note[] {
   return memoryNotes;
 }
 
-export function getContacts(): UserContact[] {
-  return memoryContacts;
+export function getTags(): Tag[] {
+  return memoryTags;
+}
+
+export function getTeammates(): User[] {
+  return memoryTeammates;
+}
+
+export function getMentionsCount(): number {
+  return memoryMentionsCount;
+}
+
+export function getCurrentFeed(): 'all' | 'tagged_me' | 'untagged' {
+  return currentFeed;
+}
+
+export function setCurrentFeed(feed: 'all' | 'tagged_me' | 'untagged') {
+  currentFeed = feed;
 }
 
 /**
- * Full refresh from the backend (notes + contacts). The server owns Supabase.
+ * Full refresh from backend:
+ * - Scoped notes for the active feed
+ * - User's private tags
+ * - Team directory for @mentions
+ * - Mentions count for sidebar notification badge
  */
-export async function syncFromServer(): Promise<void> {
-  const [notes, contacts] = await Promise.all([api.getNotes(), api.getContacts()]);
-  memoryNotes = notes;
-  memoryContacts = contacts;
-  notifyListeners();
+export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): Promise<void> {
+  const targetFeed = feed || currentFeed;
+  currentFeed = targetFeed;
+
+  try {
+    const [notesRes, tags, teammates, mentionsCount] = await Promise.all([
+      api.getNotes({ feed: targetFeed }),
+      api.getTags(),
+      api.getTeamDirectory(),
+      api.getMentionsCount(),
+    ]);
+
+    memoryNotes = notesRes.notes;
+    memoryTags = tags;
+    memoryTeammates = teammates;
+    memoryMentionsCount = mentionsCount;
+    notifyListeners();
+  } catch (err) {
+    console.warn('[Storage] Sync error:', err);
+  }
 }
 
 /**
- * Create note via the backend. The backend persists to Supabase and runs
- * Groq AI auto-tagging server-side.
+ * Create a new thought with author-defined manual tags
  */
-export async function createNote(content: string): Promise<{ note?: Note; error?: string }> {
-  const res = await api.createNote(content);
+export async function createNote(content: string, manualTags?: string[]): Promise<{ note?: Note; error?: string }> {
+  const res = await api.createNote(content, manualTags);
   if (res.error || !res.note) return res;
 
-  memoryNotes = [res.note, ...memoryNotes];
+  if (currentFeed !== 'tagged_me') {
+    memoryNotes = [res.note, ...memoryNotes];
+  }
+
+  // Refresh tags and directory quietly
+  api.getTags().then((tags) => {
+    memoryTags = tags;
+    notifyListeners();
+  });
+
   notifyListeners();
-
-  // AI tags are written by the server; fetch again shortly so they appear.
-  setTimeout(() => syncFromServer(), 3000);
-
   return res;
 }
 
 /**
- * Delete note via the backend.
+ * Delete thought
  */
 export async function deleteNote(id: string): Promise<boolean> {
   const ok = await api.deleteNote(id);
   if (ok) {
     memoryNotes = memoryNotes.filter((n) => n.id !== id);
+    // Refresh tags quietly
+    api.getTags().then((tags) => {
+      memoryTags = tags;
+      notifyListeners();
+    });
     notifyListeners();
   }
   return ok;
 }
 
 /**
- * Update note content via the backend (tags/mentions are re-parsed & re-synced).
+ * Update note content and tags
  */
 export async function updateNote(
   id: string,
-  newContent: string
+  newContent: string,
+  manualTags?: string[]
 ): Promise<{ note?: Note; error?: string }> {
-  const res = await api.updateNote(id, newContent);
+  const res = await api.updateNote(id, newContent, manualTags);
   if (res.error || !res.note) return res;
 
   const idx = memoryNotes.findIndex((n) => n.id === id);
@@ -82,40 +129,12 @@ export async function updateNote(
   } else {
     memoryNotes = [res.note, ...memoryNotes];
   }
-  notifyListeners();
-  return res;
-}
 
-/**
- * Add contact via the backend.
- */
-export async function addContact(
-  displayName: string,
-  email: string
-): Promise<{ contact?: UserContact; error?: string }> {
-  const res = await api.createContact(displayName, email);
-  if (res.contact) {
-    memoryContacts = [res.contact, ...memoryContacts];
+  api.getTags().then((tags) => {
+    memoryTags = tags;
     notifyListeners();
-  }
-  return res;
-}
-
-export function getTagsWithCounts(): Tag[] {
-  const tagCounts: Record<string, number> = {};
-
-  memoryNotes.forEach((note) => {
-    note.tags.forEach((t) => {
-      const name = t.name.toLowerCase();
-      tagCounts[name] = (tagCounts[name] || 0) + 1;
-    });
   });
 
-  return Object.keys(tagCounts)
-    .sort()
-    .map((name) => ({
-      id: `t-${name}`,
-      name,
-      count: tagCounts[name],
-    }));
+  notifyListeners();
+  return res;
 }

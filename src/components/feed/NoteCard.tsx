@@ -2,10 +2,11 @@ import React, { useState } from 'react';
 import { Note } from '../../lib/types';
 import { TagChip, MentionChip } from '../ui/Chip';
 import { Modal } from '../ui/Modal';
-import { Trash2, Edit3, Clock, ChevronRight, Image as ImageIcon } from 'lucide-react';
+import { Trash2, Edit3, Clock, ChevronRight, Image as ImageIcon, User as UserIcon } from 'lucide-react';
 
 interface NoteCardProps {
   note: Note;
+  currentUserId?: string;
   onSelect: (note: Note) => void;
   isSelected?: boolean;
   onDelete: (id: string) => void;
@@ -15,6 +16,7 @@ interface NoteCardProps {
 
 export const NoteCard: React.FC<NoteCardProps> = ({
   note,
+  currentUserId,
   onSelect,
   isSelected,
   onDelete,
@@ -24,7 +26,9 @@ export const NoteCard: React.FC<NoteCardProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
-  // Extract embedded image URLs from markdown ![alt](url) or image links
+  const isOwner = !currentUserId || note.user_id === currentUserId;
+
+  // Extract embedded image URLs from markdown ![alt](url)
   const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
   const imageUrls: string[] = [];
   let m;
@@ -38,9 +42,9 @@ export const NoteCard: React.FC<NoteCardProps> = ({
     .replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '')
     .trim();
 
-  const shouldTruncate = cleanedText.length > 160;
+  const shouldTruncate = cleanedText.length > 220;
   const displayContent = shouldTruncate && !isExpanded
-    ? cleanedText.substring(0, 160) + '...'
+    ? cleanedText.substring(0, 220) + '...'
     : cleanedText;
 
   // Format relative timestamp
@@ -68,10 +72,35 @@ export const NoteCard: React.FC<NoteCardProps> = ({
     <>
       <article
         onClick={() => onSelect(note)}
-        className={`group bg-surface rounded-xl hairline-border p-4.5 mb-3.5 transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-canvas/40 shadow-subtle ${
+        className={`group bg-surface rounded-2xl hairline-border p-4.5 mb-3.5 transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-surface/90 shadow-subtle ${
           isSelected ? 'border-primary ring-1 ring-primary/20 bg-primary-light/10' : ''
         }`}
       >
+        {/* Author header if shared note */}
+        {!isOwner && note.author && (
+          <div className="mb-2.5 flex items-center justify-between pb-2 hairline-b text-xs text-ink-muted">
+            <div className="flex items-center gap-2">
+              {note.author.avatar_url ? (
+                <img
+                  src={note.author.avatar_url}
+                  alt={note.author.username || 'author'}
+                  className="w-4 h-4 rounded-full object-cover"
+                />
+              ) : (
+                <div className="w-4 h-4 rounded-full bg-mention-text/15 text-mention-text flex items-center justify-center text-[9px] font-bold">
+                  {(note.author.full_name || note.author.username || 'T')[0].toUpperCase()}
+                </div>
+              )}
+              <span>
+                Shared by <strong className="font-mono text-ink">@{note.author.username}</strong>
+              </span>
+            </div>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-mention-text/10 text-mention-text font-semibold">
+              Tagged you
+            </span>
+          </div>
+        )}
+
         {/* Main Text Content */}
         {cleanedText && (
           <div className="text-sm font-sans text-ink leading-relaxed whitespace-pre-wrap">
@@ -82,7 +111,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                   e.stopPropagation();
                   setIsExpanded(!isExpanded);
                 }}
-                className="ml-1 text-xs text-primary font-medium hover:underline inline-flex items-center gap-0.5"
+                className="ml-1 text-xs text-primary font-medium hover:underline inline-flex items-center gap-0.5 cursor-pointer"
               >
                 {isExpanded ? 'Show less' : 'Read more'}
               </button>
@@ -92,16 +121,16 @@ export const NoteCard: React.FC<NoteCardProps> = ({
 
         {/* Embedded Image Previews */}
         {imageUrls.length > 0 && (
-          <div className="mt-2.5 flex flex-wrap gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             {imageUrls.map((url, i) => (
               <div
                 key={i}
-                className="relative rounded-lg overflow-hidden border hairline-border bg-canvas max-h-48 max-w-full"
+                className="relative rounded-xl overflow-hidden border hairline-border bg-canvas max-h-48 max-w-full"
               >
                 <img
                   src={url}
-                  alt="Note Attachment"
-                  className="object-cover max-h-48 w-auto rounded-lg hover:scale-[1.02] transition-transform"
+                  alt="Attachment"
+                  className="object-cover max-h-48 w-auto rounded-xl hover:scale-[1.02] transition-transform"
                   loading="lazy"
                 />
               </div>
@@ -111,7 +140,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
 
         {/* Tags and Mentions Pill Row */}
         {(note.tags.length > 0 || note.mentions.length > 0) && (
-          <div className="mt-3.5 flex flex-wrap items-center gap-1.5 pt-2 hairline-t">
+          <div className="mt-3.5 flex flex-wrap items-center gap-1.5 pt-2.5 hairline-t">
             {note.tags.map((t) => (
               <TagChip
                 key={t.id}
@@ -153,21 +182,23 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                 e.stopPropagation();
                 onSelect(note);
               }}
-              className="p-1 text-ink-muted hover:text-primary transition-colors"
+              className="p-1 text-ink-muted hover:text-primary transition-colors cursor-pointer"
               title="Inspect Note"
             >
               <Edit3 className="w-3.5 h-3.5" />
             </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsConfirmDeleteOpen(true);
-              }}
-              className="p-1 text-ink-muted hover:text-status-error transition-colors"
-              title="Delete Note"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+            {isOwner && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsConfirmDeleteOpen(true);
+                }}
+                className="p-1 text-ink-muted hover:text-status-error transition-colors cursor-pointer"
+                title="Delete Note"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
             <ChevronRight className="w-3.5 h-3.5 text-ink-subtle" />
           </div>
         </div>
@@ -181,7 +212,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-ink leading-normal">
-            Are you sure you want to delete this thought? This action will remove the note, its attached images, and linked tag relationships.
+            Are you sure you want to delete this thought? This action will permanently remove the note and its images.
           </p>
           <div className="flex justify-end gap-2">
             <button
@@ -190,14 +221,14 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                 e.stopPropagation();
                 setIsConfirmDeleteOpen(false);
               }}
-              className="px-3 py-2 text-xs font-medium text-ink-muted hover:text-ink"
+              className="px-3 py-2 text-xs font-medium text-ink-muted hover:text-ink cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="button"
               onClick={handleConfirmDelete}
-              className="px-4 py-2 text-xs font-medium text-white bg-status-error hover:bg-red-700 rounded-lg transition-colors"
+              className="px-4 py-2 text-xs font-medium text-white bg-status-error hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
             >
               Delete Permanently
             </button>

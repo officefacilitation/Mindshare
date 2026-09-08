@@ -1,17 +1,19 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Note, ToastMessage } from './lib/types';
+import { Note, ToastMessage, User, Tag } from './lib/types';
 import {
   getNotes,
-  getContacts,
-  getTagsWithCounts,
+  getTags,
+  getTeammates,
+  getMentionsCount,
   createNote,
   deleteNote,
   updateNote,
-  addContact,
   subscribeToStorage,
   syncFromServer,
+  setCurrentFeed,
 } from './lib/storage';
-import { api, setAuthToken, getAuthToken } from './lib/api';
+import { api } from './lib/api';
+import { supabase } from './lib/supabase';
 import { parseSearchQuery, filterNotes } from './lib/search';
 import { Header } from './components/layout/Header';
 import { Sidebar } from './components/layout/Sidebar';
@@ -20,16 +22,23 @@ import { InputBox } from './components/feed/InputBox';
 import { FeedList } from './components/feed/FeedList';
 import { ToastContainer } from './components/ui/Toast';
 import { Login } from './components/auth/Login';
+import { UsernameModal } from './components/auth/UsernameModal';
 import { GuideModal } from './components/ui/GuideModal';
 
 export function App() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
+  const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false);
+
   const [notes, setNotes] = useState<Note[]>(() => getNotes());
-  const [contacts, setContacts] = useState(() => getContacts());
+  const [tags, setTags] = useState<Tag[]>(() => getTags());
+  const [teammates, setTeammates] = useState<User[]>(() => getTeammates());
+  const [mentionsCount, setMentionsCount] = useState<number>(() => getMentionsCount());
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOperator, setSearchOperator] = useState<'AND' | 'OR'>('AND');
   const [activeFilter, setActiveFilter] = useState<{
-    type: 'all' | 'untagged' | 'tag' | 'mention';
+    type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention';
     value?: string;
   }>({ type: 'all' });
 
@@ -37,51 +46,6 @@ export function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
-
-  const refresh = useCallback(async () => {
-    await syncFromServer();
-    setNotes(getNotes());
-    setContacts(getContacts());
-  }, []);
-
-  // Check stored session token on mount
-  useEffect(() => {
-    if (!getAuthToken()) {
-      setIsAuthed(false);
-      return;
-    }
-    api.me().then((ok) => {
-      setIsAuthed(ok);
-      if (ok) refresh();
-    });
-  }, [refresh]);
-
-  // Subscribe to storage changes for reactive state
-  useEffect(() => {
-    const unsubscribe = subscribeToStorage(() => {
-      const updatedNotes = getNotes();
-      setNotes(updatedNotes);
-      setContacts(getContacts());
-
-      if (selectedNote) {
-        const found = updatedNotes.find((n) => n.id === selectedNote.id);
-        setSelectedNote(found || null);
-      }
-    });
-    return () => unsubscribe();
-  }, [selectedNote]);
-
-  // Re-sync from server on window focus + light polling (single-user consistency)
-  useEffect(() => {
-    if (!isAuthed) return;
-    const onFocus = () => refresh();
-    window.addEventListener('focus', onFocus);
-    const interval = setInterval(refresh, 30000);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      clearInterval(interval);
-    };
-  }, [isAuthed, refresh]);
 
   const addToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5);
@@ -95,25 +59,107 @@ export function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  const handleLogin = async (password: string) => {
-    const res = await api.login(password);
-    if (res.token) {
-      setAuthToken(res.token);
-      setIsAuthed(true);
-      await refresh();
+  // Full Refresh handler
+  const refresh = useCallback(async (feedType?: 'all' | 'tagged_me' | 'untagged') => {
+    const feed = feedType || (activeFilter.type === 'tagged_me' ? 'tagged_me' : 'all');
+    setCurrentFeed(feed);
+    await syncFromServer(feed);
+    setNotes(getNotes());
+    setTags(getTags());
+    setTeammates(getTeammates());
+    setMentionsCount(getMentionsCount());
+  }, [activeFilter.type]);
+
+  // Load User Profile
+  const loadProfile = useCallback(async () => {
+    const res = await api.getMe();
+    if (res.user) {
+      setCurrentUser(res.user);
+      // If handle is default or generated placeholder, open onboarding modal
+      if (!res.user.username || res.user.username.startsWith('user_')) {
+        setIsUsernameModalOpen(true);
+      }
     }
-    return res;
-  };
+  }, []);
+
+  // Monitor Supabase Auth state
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setIsAuthed(true);
+        loadProfile();
+        refresh();
+      } else {
+        setIsAuthed(false);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session) {
+        setIsAuthed(true);
+        loadProfile();
+        refresh();
+      } else {
+        setIsAuthed(false);
+        setCurrentUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [loadProfile, refresh]);
+
+  // Reactive state from local storage engine
+  useEffect(() => {
+    const unsubscribe = subscribeToStorage(() => {
+      const updatedNotes = getNotes();
+      setNotes(updatedNotes);
+      setTags(getTags());
+      setTeammates(getTeammates());
+      setMentionsCount(getMentionsCount());
+
+      if (selectedNote) {
+        const found = updatedNotes.find((n) => n.id === selectedNote.id);
+        setSelectedNote(found || null);
+      }
+    });
+    return () => unsubscribe();
+  }, [selectedNote]);
+
+  // Periodic poll & focus re-sync (every 20 seconds)
+  useEffect(() => {
+    if (!isAuthed) return;
+    const onFocus = () => refresh();
+    window.addEventListener('focus', onFocus);
+    const interval = setInterval(() => refresh(), 20000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      clearInterval(interval);
+    };
+  }, [isAuthed, refresh]);
 
   const handleLogout = async () => {
-    await api.logout();
-    setAuthToken(null);
+    await api.signOut();
     setIsAuthed(false);
+    setCurrentUser(null);
     setSelectedNote(null);
   };
 
-  const handleSaveNote = async (content: string) => {
-    return createNote(content);
+  const handleSaveUsername = async (username: string, fullName?: string) => {
+    const res = await api.updateProfile({ username, fullName });
+    if (res.user) {
+      setCurrentUser(res.user);
+      setIsUsernameModalOpen(false);
+      addToast(`Handle set to @${res.user.username}! You can now be tagged by teammates.`, 'success');
+      await refresh();
+      return { success: true };
+    }
+    return { error: res.error || 'Failed to set username' };
+  };
+
+  const handleSaveNote = async (content: string, manualTags?: string[]) => {
+    return createNote(content, manualTags);
   };
 
   const handleDeleteNote = async (id: string) => {
@@ -121,19 +167,26 @@ export function App() {
     if (selectedNote?.id === id) {
       setSelectedNote(null);
     }
+    addToast('Thought deleted.', 'info');
   };
 
-  const handleUpdateNote = (id: string, newContent: string) => {
-    return updateNote(id, newContent);
+  const handleUpdateNote = (id: string, newContent: string, manualTags?: string[]) => {
+    return updateNote(id, newContent, manualTags);
   };
 
   const handleSelectFilter = (
-    type: 'all' | 'untagged' | 'tag' | 'mention',
+    type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention',
     value?: string
   ) => {
     setActiveFilter({ type, value });
     setSearchQuery('');
     setIsMobileSidebarOpen(false);
+
+    if (type === 'tagged_me') {
+      refresh('tagged_me');
+    } else if (type === 'all' || type === 'untagged' || type === 'tag' || type === 'mention') {
+      refresh('all');
+    }
   };
 
   const handleTagClickFromCard = (tagName: string) => {
@@ -146,16 +199,13 @@ export function App() {
     setActiveFilter({ type: 'all' });
   };
 
-  // Compute tag counts dynamically
-  const tags = useMemo(() => getTagsWithCounts(), [notes]);
-
   // Compute counts for Inbox nav
   const untaggedCount = useMemo(
     () => notes.filter((n) => n.tags.length === 0).length,
     [notes]
   );
 
-  // Filter notes based on search query AND active sidebar filter
+  // Filter notes based on active filter, boolean search query & operator
   const filteredNotes = useMemo(() => {
     let result = [...notes];
 
@@ -175,28 +225,34 @@ export function App() {
 
     if (searchQuery.trim()) {
       const parsedSearch = parseSearchQuery(searchQuery);
+      // Override parsed operator with UI toggle if user selected OR explicitly
+      parsedSearch.operator = searchOperator;
       result = filterNotes(result, parsedSearch);
     }
 
     return result;
-  }, [notes, activeFilter, searchQuery]);
+  }, [notes, activeFilter, searchQuery, searchOperator]);
 
   const activeFilterTitle = useMemo(() => {
-    if (searchQuery.trim()) return `Search query: "${searchQuery}"`;
+    if (searchQuery.trim()) return `Search: "${searchQuery}" (${searchOperator})`;
+    if (activeFilter.type === 'tagged_me') return 'Thoughts where you were tagged';
     if (activeFilter.type === 'untagged') return 'Untagged thoughts';
     if (activeFilter.type === 'tag') return `#${activeFilter.value}`;
     if (activeFilter.type === 'mention') return `@${activeFilter.value}`;
     return undefined;
-  }, [searchQuery, activeFilter]);
+  }, [searchQuery, activeFilter, searchOperator]);
 
   if (isAuthed === false) {
-    return <Login onLogin={handleLogin} />;
+    return <Login onSuccess={() => { setIsAuthed(true); loadProfile(); refresh(); }} />;
   }
 
   if (isAuthed === null) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-canvas text-ink font-sans">
-        <p className="text-sm text-ink-muted">Checking session...</p>
+      <div className="min-h-screen flex items-center justify-center bg-canvas text-ink font-sans select-none">
+        <div className="flex flex-col items-center gap-2">
+          <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-xs text-ink-muted">Initializing Mindshare...</p>
+        </div>
       </div>
     );
   }
@@ -204,9 +260,10 @@ export function App() {
   return (
     <div className="min-h-screen flex flex-col bg-canvas text-ink font-sans">
       <Header
+        currentUser={currentUser}
         noteCount={notes.length}
         tagCount={tags.length}
-        contactCount={contacts.length}
+        teamCount={teammates.length}
         onToggleMobileSidebar={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
         onLogout={handleLogout}
         onOpenGuide={() => setIsGuideOpen(true)}
@@ -216,30 +273,35 @@ export function App() {
         {/* Left Sidebar (240px) */}
         <Sidebar
           tags={tags}
-          contacts={contacts}
+          teammates={teammates}
+          currentUserId={currentUser?.id}
           activeFilter={activeFilter}
           searchQuery={searchQuery}
+          searchOperator={searchOperator}
           onSearchChange={setSearchQuery}
+          onOperatorChange={setSearchOperator}
           onSelectFilter={handleSelectFilter}
-          onAddContact={addContact}
-          onAddToast={addToast}
-          isOpenMobile={isMobileSidebarOpen}
-          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+          mentionsCount={mentionsCount}
           allNotesCount={notes.length}
           untaggedCount={untaggedCount}
+          isOpenMobile={isMobileSidebarOpen}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
         />
 
         {/* Center Main Feed (600px max) */}
         <main className="flex-1 min-w-0 px-4 sm:px-6 py-6 max-w-2xl mx-auto">
-          <InputBox
-            onSaveNote={handleSaveNote}
-            allTags={tags}
-            allContacts={contacts}
-            onAddToast={addToast}
-          />
+          {activeFilter.type !== 'tagged_me' && (
+            <InputBox
+              onSaveNote={handleSaveNote}
+              allTags={tags}
+              allTeammates={teammates}
+              onAddToast={addToast}
+            />
+          )}
 
           <FeedList
             notes={filteredNotes}
+            currentUserId={currentUser?.id}
             selectedNoteId={selectedNote?.id}
             onSelectNote={setSelectedNote}
             onDeleteNote={handleDeleteNote}
@@ -249,20 +311,29 @@ export function App() {
             onClearFilter={() => {
               setSearchQuery('');
               setActiveFilter({ type: 'all' });
+              refresh('all');
             }}
           />
         </main>
 
-        {/* Right Inspector Detail Panel (300px) */}
+        {/* Right Inspector Detail Panel (280px) */}
         <DetailPanel
           note={selectedNote}
+          currentUserId={currentUser?.id}
           onClose={() => setSelectedNote(null)}
           onDeleteNote={handleDeleteNote}
           onUpdateNote={handleUpdateNote}
-          allContacts={contacts}
+          teammates={teammates}
           onAddToast={addToast}
         />
       </div>
+
+      {/* Onboarding Handle Claim Modal */}
+      <UsernameModal
+        isOpen={isUsernameModalOpen}
+        currentName={currentUser?.full_name || ''}
+        onSaveUsername={handleSaveUsername}
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <GuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />

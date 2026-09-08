@@ -1,77 +1,234 @@
 import React, { useState } from 'react';
-import { Brain, Lock, LogIn } from 'lucide-react';
+import { Brain, Lock, Mail, User as UserIcon, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react';
+import { api } from '../../lib/api';
 
 interface LoginProps {
-  onLogin: (password: string) => Promise<{ token?: string; error?: string }>;
+  onSuccess: () => void;
 }
 
-export const Login: React.FC<LoginProps> = ({ onLogin }) => {
+export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleGoogleLogin = async () => {
+    setIsGoogleLoading(true);
+    setError('');
+    const res = await api.signInWithGoogle();
+    if (res.error) {
+      setError(res.error);
+      setIsGoogleLoading(false);
+    }
+  };
+
+  const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!password.trim() || isSubmitting) return;
+    if (!email.trim() || !password || isSubmitting) return;
 
     setIsSubmitting(true);
     setError('');
-    const res = await onLogin(password.trim());
-    setIsSubmitting(false);
+    setInfoMessage('');
 
-    if (res.error) {
-      setError(res.error);
+    if (isSignUp) {
+      const res = await api.signUpWithPassword(email, password, fullName);
+      setIsSubmitting(false);
+
+      if (res.error) {
+        setError(res.error);
+      } else {
+        // If Supabase has email confirmation enabled
+        setInfoMessage('Account created! If email confirmation is enabled, please check your inbox. Otherwise, signing you in...');
+        setTimeout(() => onSuccess(), 1000);
+      }
+    } else {
+      const res = await api.signInWithPassword(email, password);
+      setIsSubmitting(false);
+
+      if (res.error) {
+        setError(res.error);
+      } else {
+        onSuccess();
+      }
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-canvas text-ink font-sans px-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-canvas text-ink font-sans px-4 py-8 select-none">
       <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center text-white shadow-subtle mb-4">
-            <Brain className="w-7 h-7" />
+        {/* Brand Header */}
+        <div className="flex flex-col items-center mb-8 text-center">
+          <div className="w-12 h-12 rounded-2xl bg-primary flex items-center justify-center text-white shadow-subtle mb-3.5 transition-transform hover:scale-105">
+            <Brain className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight">Mindshare</h1>
-          <p className="text-sm text-ink-muted mt-1">Your private thought space</p>
+          <h1 className="text-2xl font-bold tracking-tight text-ink">Mindshare</h1>
+          <p className="text-xs text-ink-muted mt-1 max-w-[260px] leading-relaxed">
+            Private internal thought space with team mentions and smart tagging
+          </p>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="bg-surface rounded-xl hairline-border shadow-subtle p-6"
-        >
-          <label className="block text-xs font-semibold text-ink uppercase tracking-wider mb-1.5">
-            Enter password
-          </label>
-          <div className="relative">
-            <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none" />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              autoFocus
-              className="w-full pl-9 pr-3 py-2.5 text-sm rounded-lg hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
-            />
+        {/* Main Card */}
+        <div className="bg-surface rounded-2xl hairline-border shadow-subtle p-6 sm:p-7">
+          {/* Google One-Click Button */}
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={isGoogleLoading || isSubmitting}
+            className="w-full py-2.5 px-4 rounded-xl hairline-border bg-canvas hover:bg-hairline/30 active:scale-[0.99] text-xs font-semibold text-ink flex items-center justify-center gap-2.5 transition-all shadow-subtle cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {isGoogleLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-primary" />
+            ) : (
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                />
+              </svg>
+            )}
+            <span>Continue with Google</span>
+          </button>
+
+          {/* Divider */}
+          <div className="relative my-5">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full hairline-t" />
+            </div>
+            <div className="relative flex justify-center text-[10px] uppercase font-semibold text-ink-subtle">
+              <span className="bg-surface px-2">or email</span>
+            </div>
           </div>
 
-          {error && (
-            <p className="text-xs text-status-error font-medium mt-2">{error}</p>
-          )}
-
-          <button
-            type="submit"
-            disabled={!password.trim() || isSubmitting}
-            className="mt-4 w-full px-4 py-2.5 text-sm font-semibold text-white bg-primary hover:bg-primary-hover rounded-lg shadow-subtle transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isSubmitting ? (
-              <span>Unlocking...</span>
-            ) : (
-              <>
-                <LogIn className="w-4 h-4" /> Unlock Mindshare
-              </>
+          {/* Email / Password Form */}
+          <form onSubmit={handleEmailSubmit} className="space-y-3.5">
+            {isSignUp && (
+              <div>
+                <label className="block text-[11px] font-semibold text-ink uppercase tracking-wider mb-1">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <UserIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none" />
+                  <input
+                    type="text"
+                    required={isSignUp}
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="e.g. Sarah Connor"
+                    className="w-full pl-9 pr-3 py-2 text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
+                  />
+                </div>
+              </div>
             )}
-          </button>
-        </form>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-ink uppercase tracking-wider mb-1">
+                Work Email
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none" />
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="alex@company.com"
+                  autoComplete="email"
+                  className="w-full pl-9 pr-3 py-2 text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-ink uppercase tracking-wider mb-1">
+                Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-muted pointer-events-none" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete={isSignUp ? 'new-password' : 'current-password'}
+                  className="w-full pl-9 pr-9 py-2 text-xs rounded-xl hairline-border bg-canvas text-ink placeholder:text-ink-subtle focus:outline-none focus:border-primary transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-subtle hover:text-ink p-0.5"
+                >
+                  {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <p className="text-xs text-status-error font-medium pt-1">{error}</p>
+            )}
+
+            {infoMessage && (
+              <p className="text-xs text-primary font-medium pt-1">{infoMessage}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={isSubmitting || !email.trim() || !password}
+              className="mt-2 w-full py-2.5 px-4 text-xs font-semibold text-white bg-primary hover:bg-primary-hover active:scale-[0.99] rounded-xl shadow-subtle transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {isSubmitting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <span>{isSignUp ? 'Create Account' : 'Sign In'}</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Toggle Sign Up / Sign In */}
+          <div className="mt-4 pt-3.5 hairline-t text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setError('');
+                setInfoMessage('');
+              }}
+              className="text-xs text-ink-muted hover:text-primary transition-colors font-medium cursor-pointer"
+            >
+              {isSignUp ? (
+                <span>Already have an account? <strong>Sign In</strong></span>
+              ) : (
+                <span>New to the team? <strong>Create an account</strong></span>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Security & Free Tier Notice */}
+        <p className="text-center text-[11px] text-ink-subtle mt-4">
+          Strictly private data • No unauthorized tag sharing
+        </p>
       </div>
     </div>
   );
