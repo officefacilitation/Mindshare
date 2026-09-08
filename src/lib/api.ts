@@ -77,7 +77,7 @@ export const api = {
     }
   },
 
-  async signUpWithPassword(email: string, password: string, fullName?: string): Promise<{ user?: any; error?: string }> {
+  async signUpWithPassword(email: string, password: string, fullName?: string): Promise<{ user?: any; session?: any; error?: string }> {
     try {
       const { data, error } = await supabase.auth.signUp({
         email: email.trim(),
@@ -89,9 +89,37 @@ export const api = {
         },
       });
       if (error) return { error: error.message };
-      return { user: data.user };
+      return { user: data.user, session: data.session };
     } catch (e: any) {
       return { error: e.message || 'Registration failed' };
+    }
+  },
+
+  async resetPasswordForEmail(email: string): Promise<{ success?: boolean; error?: string }> {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin,
+      });
+      if (error) return { error: error.message };
+      return { success: true };
+    } catch (e: any) {
+      return { error: e.message || 'Failed to send password reset email' };
+    }
+  },
+
+  async resendConfirmationEmail(email: string): Promise<{ success?: boolean; error?: string }> {
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email.trim(),
+        options: {
+          emailRedirectTo: window.location.origin,
+        },
+      });
+      if (error) return { error: error.message };
+      return { success: true };
+    } catch (e: any) {
+      return { error: e.message || 'Failed to resend confirmation email' };
     }
   },
 
