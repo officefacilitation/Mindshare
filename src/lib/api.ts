@@ -167,13 +167,28 @@ export const api = {
     }
   },
 
-  async getMentionsCount(): Promise<number> {
+  async getMentionsCount(): Promise<{ count: number; unreadCount: number; hasUnread: boolean }> {
     try {
       const { ok, data } = await request('/notes/mentions-count');
-      if (ok && typeof data?.count === 'number') return data.count;
-      return 0;
+      if (ok && typeof data?.count === 'number') {
+        return {
+          count: data.count,
+          unreadCount: typeof data?.unreadCount === 'number' ? data.unreadCount : 0,
+          hasUnread: Boolean(data?.hasUnread),
+        };
+      }
+      return { count: 0, unreadCount: 0, hasUnread: false };
     } catch {
-      return 0;
+      return { count: 0, unreadCount: 0, hasUnread: false };
+    }
+  },
+
+  async markMentionsRead(): Promise<{ success: boolean; mentions_last_seen_at?: string }> {
+    try {
+      const { ok, data } = await request('/notes/mark-mentions-read', { method: 'POST' });
+      return { success: Boolean(ok && data?.success), mentions_last_seen_at: data?.mentions_last_seen_at };
+    } catch {
+      return { success: false };
     }
   },
 

@@ -8,7 +8,7 @@ import {
   getMyNotesCount,
   getUntaggedCount,
   getIsFeedLoading,
-  checkHasUnreadMentions,
+  getHasUnreadMentions,
   markMentionsAsRead,
   createNote,
   deleteNote,
@@ -43,7 +43,7 @@ export function App() {
   const [myNotesCount, setMyNotesCount] = useState<number>(() => getMyNotesCount());
   const [untaggedCount, setUntaggedCount] = useState<number>(() => getUntaggedCount());
   const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => getIsFeedLoading());
-  const [hasUnreadMentions, setHasUnreadMentions] = useState<boolean>(false);
+  const [hasUnreadMentions, setHasUnreadMentions] = useState<boolean>(() => getHasUnreadMentions());
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOperator, setSearchOperator] = useState<'AND' | 'OR'>('AND');
@@ -87,7 +87,7 @@ export function App() {
     const res = await api.getMe();
     if (res.user) {
       setCurrentUser(res.user);
-      setHasUnreadMentions(checkHasUnreadMentions(res.user.id));
+      setHasUnreadMentions(getHasUnreadMentions());
       // Prompt user to choose their handle if:
       // 1) is_handle_set is explicitly false (newly created account from Google/Email)
       // 2) OR user has no username set
@@ -136,7 +136,7 @@ export function App() {
       setMyNotesCount(getMyNotesCount());
       setUntaggedCount(getUntaggedCount());
       setIsFeedLoading(getIsFeedLoading());
-      setHasUnreadMentions(checkHasUnreadMentions(currentUser?.id));
+      setHasUnreadMentions(getHasUnreadMentions());
 
       if (selectedNote) {
         const found = updatedNotes.find((n) => n.id === selectedNote.id);
@@ -203,7 +203,7 @@ export function App() {
 
     // Instant 0ms feed switch from local RAM cache
     if (type === 'tagged_me') {
-      switchFeed('tagged_me', currentUser?.id);
+      switchFeed('tagged_me');
       setHasUnreadMentions(false);
     } else {
       switchFeed('all');

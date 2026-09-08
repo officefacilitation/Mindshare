@@ -36,6 +36,7 @@ CREATE TABLE public.users (
   avatar_url TEXT,
   status TEXT CHECK (status IN ('active', 'invited', 'pending')) DEFAULT 'active',
   is_handle_set BOOLEAN DEFAULT FALSE,
+  mentions_last_seen_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );

@@ -24,6 +24,7 @@ const feedLoaded: {
 let memoryTags: Tag[] = [];
 let memoryTeammates: User[] = [];
 let memoryMentionsCount = 0;
+let memoryHasUnreadMentions = false;
 let currentFeed: 'all' | 'tagged_me' | 'untagged' = 'all';
 let isFeedLoading = false;
 
@@ -61,6 +62,10 @@ export function getMentionsCount(): number {
   return memoryMentionsCount;
 }
 
+export function getHasUnreadMentions(): boolean {
+  return memoryHasUnreadMentions;
+}
+
 /**
  * Accurately returns the author's total personal thoughts count.
  * This is NEVER corrupted when viewing the Tagged Me tab.
@@ -86,45 +91,26 @@ export function getIsFeedLoading(): boolean {
 }
 
 /**
- * Checks if there are any tagged thoughts created after the user last viewed the Tagged Me tab.
+ * Marks tagged thoughts as seen/read across ALL user devices (updates DB checkpoint).
  */
-export function checkHasUnreadMentions(userId?: string): boolean {
-  if (!userId) return false;
-  if (feedCaches.tagged_me.length === 0) return false;
-
-  const lastSeenStr = localStorage.getItem(`mindshare_tagged_last_seen_${userId}`);
-  if (!lastSeenStr) {
-    return feedCaches.tagged_me.length > 0;
-  }
-
-  const lastSeen = parseInt(lastSeenStr, 10);
-  if (isNaN(lastSeen)) return false;
-
-  return feedCaches.tagged_me.some((n) => {
-    const time = new Date(n.created_at).getTime();
-    return time > lastSeen;
-  });
-}
-
-/**
- * Marks tagged thoughts as seen/read so the pulse immediately stops.
- */
-export function markMentionsAsRead(userId?: string) {
-  if (!userId) return;
-  localStorage.setItem(`mindshare_tagged_last_seen_${userId}`, Date.now().toString());
+export function markMentionsAsRead() {
+  memoryHasUnreadMentions = false;
   notifyListeners();
+  api.markMentionsRead().catch((err) => {
+    console.warn('[Storage] markMentionsRead failed:', err);
+  });
 }
 
 /**
  * Switches the active feed in 0ms without waiting for network.
  * If cache exists, screen updates instantly. In background, revalidates cache.
  */
-export function switchFeed(feed: 'all' | 'tagged_me' | 'untagged', userId?: string) {
+export function switchFeed(feed: 'all' | 'tagged_me' | 'untagged') {
   currentFeed = feed;
   const targetKey = feed === 'tagged_me' ? 'tagged_me' : 'all';
 
-  if (feed === 'tagged_me' && userId) {
-    markMentionsAsRead(userId);
+  if (feed === 'tagged_me') {
+    markMentionsAsRead();
   }
 
   // If feed is already cached, show it instantly in 0ms
@@ -179,7 +165,7 @@ export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): P
   }
 
   try {
-    const [notesRes, tags, teammates, mentionsCount] = await Promise.all([
+    const [notesRes, tags, teammates, mentionsData] = await Promise.all([
       api.getNotes({ feed: targetKey }),
       api.getTags(),
       api.getTeamDirectory(),
@@ -190,13 +176,14 @@ export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): P
     feedLoaded[targetKey] = true;
     memoryTags = tags;
     memoryTeammates = teammates;
-    memoryMentionsCount = mentionsCount;
+    memoryMentionsCount = mentionsData.count;
+    memoryHasUnreadMentions = mentionsData.hasUnread;
     isFeedLoading = false;
     notifyListeners();
 
-    // Warm up the other feed quietly in the background so switching is always 0ms
+    // If hasUnread is true OR the other feed is not yet loaded, warm/refresh it quietly in background
     const otherKey: 'all' | 'tagged_me' = targetKey === 'all' ? 'tagged_me' : 'all';
-    if (!feedLoaded[otherKey]) {
+    if (!feedLoaded[otherKey] || (otherKey === 'tagged_me' && mentionsData.hasUnread)) {
       api.getNotes({ feed: otherKey }).then((res) => {
         feedCaches[otherKey] = res.notes;
         feedLoaded[otherKey] = true;

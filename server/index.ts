@@ -465,18 +465,79 @@ app.get('/api/notes', async (req: AuthRequest, res: Response) => {
   });
 });
 
-// Count unread / total mentions for the user (to show badge in sidebar)
+// Count unread and total mentions for the user across all devices
 app.get('/api/notes/mentions-count', async (req: AuthRequest, res: Response) => {
   const db = getDb(req);
-  if (!db || !req.userId) return res.status(500).json({ count: 0 });
+  if (!db || !req.userId) return res.status(500).json({ count: 0, unreadCount: 0, hasUnread: false });
 
-  const { count, error } = await db
-    .from('mentions')
-    .select('note_id', { count: 'exact', head: true })
-    .eq('user_id', req.userId);
+  try {
+    // 1. Fetch user's mentions_last_seen_at checkpoint
+    const { data: userProfile } = await db
+      .from('users')
+      .select('mentions_last_seen_at')
+      .eq('id', req.userId)
+      .maybeSingle();
 
-  if (error) return res.status(500).json({ count: 0 });
-  res.json({ count: count || 0 });
+    // 2. Fetch all tagged notes for this user that are not deleted
+    const { data: taggedNotes, error } = await db
+      .from('mentions')
+      .select('note_id, notes!inner(created_at, deleted_at)')
+      .eq('user_id', req.userId)
+      .is('notes.deleted_at', null);
+
+    if (error) {
+      console.warn('[API] mentions query error:', error.message);
+      // Fallback simple count if relation error
+      const { count } = await db.from('mentions').select('note_id', { count: 'exact', head: true }).eq('user_id', req.userId);
+      return res.json({ count: count || 0, unreadCount: 0, hasUnread: false });
+    }
+
+    const totalCount = taggedNotes?.length || 0;
+    let unreadCount = 0;
+
+    if (userProfile?.mentions_last_seen_at) {
+      const lastSeenTime = new Date(userProfile.mentions_last_seen_at).getTime();
+      unreadCount = (taggedNotes || []).filter((item: any) => {
+        const createdAt = item.notes?.created_at ? new Date(item.notes.created_at).getTime() : 0;
+        return createdAt > lastSeenTime;
+      }).length;
+    } else {
+      unreadCount = totalCount;
+    }
+
+    res.json({
+      count: totalCount,
+      unreadCount,
+      hasUnread: unreadCount > 0,
+      mentions_last_seen_at: userProfile?.mentions_last_seen_at || null,
+    });
+  } catch (err: any) {
+    console.warn('[API] mentions-count error:', err.message);
+    res.status(500).json({ count: 0, unreadCount: 0, hasUnread: false });
+  }
+});
+
+// Mark mentions as read across all devices (updates mentions_last_seen_at in DB)
+app.post('/api/notes/mark-mentions-read', async (req: AuthRequest, res: Response) => {
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+
+  try {
+    const now = new Date().toISOString();
+    const { error } = await db
+      .from('users')
+      .update({ mentions_last_seen_at: now })
+      .eq('id', req.userId);
+
+    if (error) {
+      console.warn('[API] Failed to update mentions_last_seen_at:', error.message);
+      return res.status(500).json({ error: error.message, success: false });
+    }
+
+    res.json({ success: true, mentions_last_seen_at: now });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, success: false });
+  }
 });
 
 // Create Note
