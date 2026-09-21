@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Note, User } from '../../lib/types';
+import React, { useState, useRef } from 'react';
+import { Note, User, Tag } from '../../lib/types';
 import { TagChip, MentionChip } from '../ui/Chip';
 import {
   FileText,
@@ -14,10 +14,16 @@ import {
   Image as ImageIcon,
   Sparkles,
   Loader2,
-  User as UserIcon,
+  Maximize2,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { api } from '../../lib/api';
+
+interface AttachedImage {
+  id: string;
+  url: string;
+  uploading?: boolean;
+}
 
 interface DetailPanelProps {
   note: Note | null;
@@ -26,6 +32,7 @@ interface DetailPanelProps {
   onDeleteNote: (id: string) => void;
   onUpdateNote: (id: string, newContent: string, manualTags?: string[]) => Promise<{ note?: Note; error?: string }>;
   teammates: User[];
+  allTags?: Tag[];
   onAddToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
@@ -36,11 +43,21 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
   onDeleteNote,
   onUpdateNote,
   teammates,
+  allTags = [],
   onAddToast,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
+  const [editAttachedImages, setEditAttachedImages] = useState<AttachedImage[]>([]);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Modals & confirmation dialogs
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [isConfirmRemoveTagOpen, setIsConfirmRemoveTagOpen] = useState(false);
+  const [tagToRemove, setTagToRemove] = useState<string | null>(null);
+  const [isConfirmRemoveImageOpen, setIsConfirmRemoveImageOpen] = useState(false);
+  const [imageToRemove, setImageToRemove] = useState<{ url: string; id?: string } | null>(null);
   const [activeLightBoxUrl, setActiveLightBoxUrl] = useState<string | null>(null);
 
   const [newTagInput, setNewTagInput] = useState('');
@@ -68,24 +85,137 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
 
   const isOwner = !currentUserId || note.user_id === currentUserId;
 
-  // Extract embedded image URLs
+  // Extract embedded image URLs from current note
   const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
   const imageUrls: string[] = [];
   let m;
-  while ((m = imageRegex.exec(note.content)) !== null) {
+  const regexClone = new RegExp(imageRegex.source, 'gi');
+  while ((m = regexClone.exec(note.content)) !== null) {
     const url = m[1] || m[2];
     if (url && !imageUrls.includes(url)) imageUrls.push(url);
   }
 
+  // Prior tags available in workspace that are not yet attached to this note
+  const priorAvailableTags = allTags.filter(
+    (t) => !note.tags.some((nt) => nt.name.toLowerCase() === t.name.toLowerCase())
+  );
+
   const handleStartEdit = () => {
     if (!isOwner) return;
-    setEditContent(note.content);
+    // Separate plain text from markdown image links
+    const textWithoutImages = note.content
+      .replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '')
+      .trim();
+    setEditContent(textWithoutImages);
+
+    // Initialize existing attached images
+    setEditAttachedImages(
+      imageUrls.map((url, idx) => ({
+        id: `img-init-${idx}-${Date.now()}`,
+        url,
+        uploading: false,
+      }))
+    );
     setIsEditing(true);
   };
 
+  // Upload an image file to Cloudinary for this note
+  const uploadImageFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      onAddToast('Please select a valid image file (PNG, JPG, WebP).', 'error');
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      onAddToast('Image size should be less than 8 MB.', 'error');
+      return;
+    }
+
+    const tempId = 'edit-img-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+    setEditAttachedImages((prev) => [...prev, { id: tempId, url: '', uploading: true }]);
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64Data = reader.result as string;
+        const res = await api.uploadImage(base64Data);
+
+        if (res.error || !res.url) {
+          setEditAttachedImages((prev) => prev.filter((img) => img.id !== tempId));
+          onAddToast(res.error || 'Failed to upload image.', 'error');
+        } else {
+          setEditAttachedImages((prev) =>
+            prev.map((img) => (img.id === tempId ? { id: tempId, url: res.url!, uploading: false } : img))
+          );
+          onAddToast('Image attached to note!', 'success');
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      setEditAttachedImages((prev) => prev.filter((img) => img.id !== tempId));
+      onAddToast('Failed to read image file.', 'error');
+    }
+  };
+
+  const handleMultipleFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    files.forEach((f) => uploadImageFile(f));
+    e.target.value = '';
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items || []);
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          uploadImageFile(file);
+        }
+      }
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    const files = Array.from(e.dataTransfer.files || []).filter((f) => f.type.startsWith('image/'));
+    if (files.length > 0) {
+      files.forEach((f) => uploadImageFile(f));
+    }
+  };
+
   const handleSaveEdit = async () => {
-    if (!editContent.trim()) return;
-    const res = await onUpdateNote(note.id, editContent.trim());
+    const isUploading = editAttachedImages.some((img) => img.uploading);
+    if (isUploading) {
+      onAddToast('Please wait for image uploads to complete before saving.', 'info');
+      return;
+    }
+
+    const trimmedText = editContent.trim();
+    const validImages = editAttachedImages.filter((img) => img.url);
+
+    if (!trimmedText && validImages.length === 0) {
+      onAddToast('Note content cannot be empty.', 'error');
+      return;
+    }
+
+    // Reconstruct full content with image markdown tags
+    const imageMarkdown = validImages.map((img) => `\n![image](${img.url})`).join('');
+    const fullContent = (trimmedText + imageMarkdown).trim();
+
+    const res = await onUpdateNote(note.id, fullContent);
     if (res.error) {
       onAddToast(res.error, 'error');
     } else {
@@ -131,15 +261,58 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     }
   };
 
-  const handleRemoveTag = async (tagName: string) => {
-    if (!isOwner) return;
-    const regex = new RegExp(`(?:^|\\s)#${tagName}\\b`, 'gi');
+  const handleConfirmRemoveTag = async () => {
+    if (!isOwner || !tagToRemove) return;
+
+    const regex = new RegExp(`(?:^|\\s)#${tagToRemove}\\b`, 'gi');
     const updatedContent = note.content.replace(regex, '').trim();
+
+    if (!updatedContent) {
+      onAddToast('Cannot remove tag: thought would be empty. Delete the thought instead.', 'error');
+      setIsConfirmRemoveTagOpen(false);
+      setTagToRemove(null);
+      return;
+    }
+
     const res = await onUpdateNote(note.id, updatedContent);
+    setIsConfirmRemoveTagOpen(false);
+    setTagToRemove(null);
+
     if (res.error) {
       onAddToast(res.error, 'error');
     } else {
-      onAddToast(`Removed tag #${tagName}`, 'info');
+      onAddToast(`Removed tag #${tagToRemove}`, 'info');
+    }
+  };
+
+  const handleConfirmRemoveImage = async () => {
+    if (!imageToRemove) return;
+
+    if (isEditing) {
+      // In edit mode: remove from attachedImages draft
+      setEditAttachedImages((prev) =>
+        prev.filter((img) => img.id !== imageToRemove.id && img.url !== imageToRemove.url)
+      );
+      setIsConfirmRemoveImageOpen(false);
+      setImageToRemove(null);
+      onAddToast('Image removed from draft.', 'info');
+    } else {
+      // In view mode: immediately remove markdown from note content
+      if (!isOwner) return;
+      const targetUrl = imageToRemove.url;
+      const urlEscaped = targetUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const imgRegex = new RegExp(`!\\[.*?\\]\\(${urlEscaped}\\)|${urlEscaped}`, 'gi');
+      const updatedContent = note.content.replace(imgRegex, '').trim();
+
+      const res = await onUpdateNote(note.id, updatedContent);
+      setIsConfirmRemoveImageOpen(false);
+      setImageToRemove(null);
+
+      if (res.error) {
+        onAddToast(res.error, 'error');
+      } else {
+        onAddToast('Image removed from thought.', 'info');
+      }
     }
   };
 
@@ -173,6 +346,16 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
 
   const panelContent = (
     <div className="flex flex-col h-full bg-surface p-4.5 select-none overflow-y-auto">
+      {/* Hidden File Input for Image Upload */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleMultipleFilesSelected}
+        accept="image/*"
+        multiple
+        className="hidden"
+      />
+
       {/* Header Bar */}
       <div className="flex items-center justify-between pb-3.5 mb-3 hairline-b">
         <div className="flex items-center gap-2">
@@ -229,19 +412,78 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                 onClick={handleStartEdit}
                 className="text-xs text-primary hover:underline flex items-center gap-1 font-medium cursor-pointer"
               >
-                <Edit2 className="w-3 h-3" /> Edit
+                <Edit2 className="w-3 h-3" /> Edit Thought
               </button>
             )}
           </div>
 
           {isEditing ? (
-            <div className="space-y-2">
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`space-y-2 p-2 rounded-xl transition-all ${
+                isDraggingOver ? 'border border-primary bg-primary-light/10' : ''
+              }`}
+            >
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
+                onPaste={handlePaste}
+                placeholder="Edit thought... drag or paste images directly..."
                 className="w-full h-36 p-3 text-base sm:text-sm bg-canvas rounded-xl hairline-border text-ink focus:outline-none focus:border-primary resize-none font-sans"
               />
-              <div className="flex justify-end gap-2">
+
+              {/* Edit Mode Attached Media Previews */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-ink-subtle uppercase tracking-wider flex items-center gap-1">
+                    <ImageIcon className="w-3 h-3 text-primary" /> Attached Images ({editAttachedImages.length})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="text-xs text-primary hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" /> Add Image
+                  </button>
+                </div>
+
+                {editAttachedImages.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2 pt-1">
+                    {editAttachedImages.map((img) => (
+                      <div
+                        key={img.id}
+                        className="relative group rounded-xl overflow-hidden border hairline-border bg-canvas aspect-square flex items-center justify-center"
+                      >
+                        {img.uploading ? (
+                          <div className="flex flex-col items-center justify-center text-primary text-[10px] gap-1 p-1">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Uploading...</span>
+                          </div>
+                        ) : (
+                          <>
+                            <img src={img.url} alt="Attached" className="w-full h-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setImageToRemove({ url: img.url, id: img.id });
+                                setIsConfirmRemoveImageOpen(true);
+                              }}
+                              className="absolute top-1 right-1 bg-black/75 hover:bg-status-error text-white rounded-full p-1 transition-colors shadow-md cursor-pointer"
+                              title="Remove image"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsEditing(false)}
@@ -254,7 +496,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                   onClick={handleSaveEdit}
                   className="px-3.5 py-1.5 text-xs font-semibold text-white bg-primary hover:bg-primary-hover rounded-xl shadow-subtle flex items-center gap-1 cursor-pointer"
                 >
-                  <Check className="w-3.5 h-3.5" /> Save
+                  <Check className="w-3.5 h-3.5" /> Save Changes
                 </button>
               </div>
             </div>
@@ -265,20 +507,53 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           )}
         </div>
 
-        {/* Attached Images Lightbox Grid */}
-        {imageUrls.length > 0 && (
+        {/* Attached Images Lightbox Grid (View Mode) */}
+        {!isEditing && imageUrls.length > 0 && (
           <div>
-            <h4 className="text-[10px] font-bold text-ink-subtle uppercase tracking-wider mb-2 flex items-center gap-1">
-              <ImageIcon className="w-3 h-3 text-primary" /> Attached Media ({imageUrls.length})
-            </h4>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-[10px] font-bold text-ink-subtle uppercase tracking-wider flex items-center gap-1">
+                <ImageIcon className="w-3 h-3 text-primary" /> Attached Media ({imageUrls.length})
+              </h4>
+              {isOwner && (
+                <button
+                  type="button"
+                  onClick={handleStartEdit}
+                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+                >
+                  <Plus className="w-3 h-3" /> Add Image
+                </button>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               {imageUrls.map((url, i) => (
                 <div
                   key={i}
-                  onClick={() => setActiveLightBoxUrl(url)}
-                  className="relative group rounded-xl overflow-hidden border hairline-border bg-canvas aspect-square cursor-pointer hover:opacity-90 transition-opacity"
+                  className="relative group rounded-xl overflow-hidden border hairline-border bg-canvas aspect-square"
                 >
-                  <img src={url} alt="Attachment" className="w-full h-full object-cover" />
+                  <img
+                    src={url}
+                    alt="Attachment"
+                    onClick={() => setActiveLightBoxUrl(url)}
+                    className="w-full h-full object-cover cursor-pointer group-hover:scale-105 transition-transform"
+                  />
+                  <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none flex items-center justify-center">
+                    <Maximize2 className="w-5 h-5 text-white/90" />
+                  </div>
+                  {isOwner && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setImageToRemove({ url });
+                        setIsConfirmRemoveImageOpen(true);
+                      }}
+                      className="absolute top-1.5 right-1.5 p-1.5 rounded-lg bg-black/70 hover:bg-status-error text-white opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-md"
+                      title="Remove image from thought"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -361,7 +636,10 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                   <TagChip tag={t} />
                   {isOwner && (
                     <button
-                      onClick={() => handleRemoveTag(t.name)}
+                      onClick={() => {
+                        setTagToRemove(t.name);
+                        setIsConfirmRemoveTagOpen(true);
+                      }}
                       className="ml-1 text-[10px] text-ink-subtle hover:text-status-error cursor-pointer"
                       title="Remove tag"
                     >
@@ -372,6 +650,31 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
               ))
             )}
           </div>
+
+          {/* Prior Tags Quick-Pick Section */}
+          {isOwner && priorAvailableTags.length > 0 && (
+            <div className="mt-2.5 pt-2 hairline-t">
+              <span className="text-[10px] text-ink-subtle block mb-1 font-semibold uppercase tracking-wider">
+                Prior Tags in Workspace:
+              </span>
+              <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-1">
+                {priorAvailableTags.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => handleAddTagToNote(t.name)}
+                    className="text-[10px] px-2 py-0.5 rounded-lg bg-canvas hover:bg-primary-light/60 text-ink-muted hover:text-primary hairline-border transition-colors cursor-pointer flex items-center gap-1"
+                    title={`Click to add #${t.name} to this note`}
+                  >
+                    <span>+ #{t.name}</span>
+                    {t.count !== undefined && (
+                      <span className="text-[9px] opacity-60 font-mono">({t.count})</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Teammates Mentioned Section */}
@@ -392,7 +695,9 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
           {/* Quick Mention Picker for note owner */}
           {isOwner && (
             <div className="pt-2">
-              <span className="text-[10px] text-ink-subtle block mb-1">Tag a teammate:</span>
+              <span className="text-[10px] text-ink-subtle block mb-1 font-semibold uppercase tracking-wider">
+                Tag a teammate:
+              </span>
               <div className="flex flex-wrap gap-1">
                 {teammates
                   .filter((u) => !note.mentions.some((m) => m.username.toLowerCase() === u.username?.toLowerCase()))
@@ -476,7 +781,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Thought Confirmation Modal */}
       <Modal
         isOpen={isConfirmDeleteOpen}
         onClose={() => setIsConfirmDeleteOpen(false)}
@@ -484,7 +789,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
       >
         <div className="space-y-4">
           <p className="text-sm text-ink leading-normal">
-            Are you sure you want to delete this thought? This action cannot be undone.
+            Are you sure you want to delete this thought? This action will permanently remove the note and its attached media.
           </p>
           <div className="flex justify-end gap-2">
             <button
@@ -498,6 +803,81 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
               className="px-4 py-2 text-xs font-medium text-white bg-status-error hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
             >
               Delete Permanently
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Remove Tag Confirmation Modal */}
+      <Modal
+        isOpen={isConfirmRemoveTagOpen}
+        onClose={() => {
+          setIsConfirmRemoveTagOpen(false);
+          setTagToRemove(null);
+        }}
+        title="Remove Tag"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-ink leading-normal">
+            Are you sure you want to remove tag <strong className="text-primary font-mono">#{tagToRemove}</strong> from this thought?
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsConfirmRemoveTagOpen(false);
+                setTagToRemove(null);
+              }}
+              className="px-3 py-2 text-xs font-medium text-ink-muted hover:text-ink cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmRemoveTag}
+              className="px-4 py-2 text-xs font-medium text-white bg-status-error hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
+            >
+              Remove Tag
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Remove Image Confirmation Modal */}
+      <Modal
+        isOpen={isConfirmRemoveImageOpen}
+        onClose={() => {
+          setIsConfirmRemoveImageOpen(false);
+          setImageToRemove(null);
+        }}
+        title="Remove Image Attachment"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-ink leading-normal">
+            Are you sure you want to remove this image from this thought?
+          </p>
+          {imageToRemove?.url && (
+            <div className="w-24 h-24 rounded-xl overflow-hidden hairline-border bg-canvas mx-auto">
+              <img src={imageToRemove.url} alt="To remove" className="w-full h-full object-cover" />
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsConfirmRemoveImageOpen(false);
+                setImageToRemove(null);
+              }}
+              className="px-3 py-2 text-xs font-medium text-ink-muted hover:text-ink cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmRemoveImage}
+              className="px-4 py-2 text-xs font-medium text-white bg-status-error hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
+            >
+              Remove Image
             </button>
           </div>
         </div>

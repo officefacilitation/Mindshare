@@ -266,6 +266,15 @@ export const api = {
     }
   },
 
+  async deleteTag(idOrName: string): Promise<boolean> {
+    try {
+      const { ok } = await request(`/tags/${encodeURIComponent(idOrName)}`, { method: 'DELETE' });
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  },
+
   // On-Demand AI Tag Suggestions (User has full control)
   async suggestTags(content: string): Promise<{ tags: string[]; summary?: string; error?: string }> {
     try {

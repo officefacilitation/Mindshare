@@ -329,19 +329,30 @@ async function batchInsertTagsAndJunctions(db: any, userId: string, noteId: stri
       .from('tags')
       .select('id')
       .eq('user_id', userId)
-      .eq('name', cleanName)
+      .ilike('name', cleanName)
       .maybeSingle();
 
     let tagId = existingTag?.id;
 
     if (!tagId) {
-      const { data: newTag } = await db
+      const { data: newTag, error: insertErr } = await db
         .from('tags')
         .insert({ user_id: userId, name: cleanName })
         .select('id')
         .maybeSingle();
 
-      tagId = newTag?.id;
+      if (newTag) {
+        tagId = newTag.id;
+      } else if (insertErr) {
+        // Fallback in case of race condition / unique constraint
+        const { data: retryTag } = await db
+          .from('tags')
+          .select('id')
+          .eq('user_id', userId)
+          .ilike('name', cleanName)
+          .maybeSingle();
+        tagId = retryTag?.id;
+      }
     }
 
     if (tagId) {
@@ -648,6 +659,14 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
 
   const now = new Date().toISOString();
 
+  // Fetch existing note to identify any removed images
+  const { data: existingNote } = await db
+    .from('notes')
+    .select('content')
+    .eq('id', id)
+    .eq('user_id', req.userId)
+    .maybeSingle();
+
   const { data: updatedRow, error: updateErr } = await db
     .from('notes')
     .update({ content, updated_at: now })
@@ -661,6 +680,28 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
   }
   if (!updatedRow) {
     return res.status(404).json({ error: 'Note not found or you do not have permission to edit it.', success: false });
+  }
+
+  // Delete removed images from Cloudinary asynchronously
+  if (existingNote?.content) {
+    const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
+    const oldUrls: string[] = [];
+    let m;
+    while ((m = imageRegex.exec(existingNote.content)) !== null) {
+      const u = m[1] || m[2];
+      if (u && !oldUrls.includes(u)) oldUrls.push(u);
+    }
+    const newUrls: string[] = [];
+    while ((m = imageRegex.exec(content)) !== null) {
+      const u = m[1] || m[2];
+      if (u && !newUrls.includes(u)) newUrls.push(u);
+    }
+    const removedUrls = oldUrls.filter((u) => !newUrls.includes(u));
+    removedUrls.forEach((u) => {
+      deleteFromCloudinary(u).catch((err) =>
+        console.error('[Cloudinary Delete Error]:', err.message)
+      );
+    });
   }
 
   const combinedTags = Array.from(new Set([
@@ -760,6 +801,66 @@ app.delete('/api/notes/:id', async (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 });
 
+// Delete User's Private Tag entirely
+app.delete('/api/tags/:id', async (req: AuthRequest, res: Response) => {
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+
+  const { id } = req.params;
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+  // Find tag by ID or by name
+  let query = db.from('tags').select('id, name').eq('user_id', req.userId);
+  if (isUuid) {
+    query = query.eq('id', id);
+  } else {
+    query = query.ilike('name', id.trim().replace(/^#/, ''));
+  }
+
+  const { data: tagRow, error: findErr } = await query.maybeSingle();
+
+  if (findErr) {
+    return res.status(500).json({ error: findErr.message, success: false });
+  }
+  if (!tagRow) {
+    return res.status(404).json({ error: 'Tag not found or unauthorized', success: false });
+  }
+
+  // Delete from tags table (cascades to note_tags)
+  const { error: delErr } = await db
+    .from('tags')
+    .delete()
+    .eq('id', tagRow.id)
+    .eq('user_id', req.userId);
+
+  if (delErr) {
+    return res.status(500).json({ error: delErr.message, success: false });
+  }
+
+  // Also remove the #tag string from user's notes so it doesn't re-extract
+  try {
+    const { data: userNotes } = await db
+      .from('notes')
+      .select('id, content')
+      .eq('user_id', req.userId)
+      .is('deleted_at', null);
+
+    const regex = new RegExp(`(?:^|\\s)#${tagRow.name}\\b`, 'gi');
+    for (const n of userNotes || []) {
+      if (regex.test(n.content)) {
+        const cleaned = n.content.replace(regex, '').trim();
+        if (cleaned.length > 0) {
+          await db.from('notes').update({ content: cleaned }).eq('id', n.id);
+        }
+      }
+    }
+  } catch (cleanErr: any) {
+    console.warn('[Tag Delete] Notice when cleaning note text:', cleanErr.message);
+  }
+
+  res.json({ success: true, deletedTagId: tagRow.id, name: tagRow.name });
+});
+
 // Get User's Private Tags with Note Counts
 app.get('/api/tags', async (req: AuthRequest, res: Response) => {
   const db = getDb(req);
@@ -773,18 +874,24 @@ app.get('/api/tags', async (req: AuthRequest, res: Response) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  const { data: noteTags } = await db
-    .from('note_tags')
-    .select(`
-      tag_id,
-      notes!inner ( user_id )
-    `)
-    .eq('notes.user_id', req.userId);
-
   const countMap: Record<string, number> = {};
-  (noteTags || []).forEach((nt: any) => {
-    countMap[nt.tag_id] = (countMap[nt.tag_id] || 0) + 1;
-  });
+
+  try {
+    const { data: noteTags } = await db
+      .from('note_tags')
+      .select(`
+        tag_id,
+        notes!inner ( user_id, deleted_at )
+      `)
+      .eq('notes.user_id', req.userId)
+      .is('notes.deleted_at', null);
+
+    (noteTags || []).forEach((nt: any) => {
+      countMap[nt.tag_id] = (countMap[nt.tag_id] || 0) + 1;
+    });
+  } catch (cntErr: any) {
+    console.warn('[GET /api/tags] Could not count note_tags junction:', cntErr.message);
+  }
 
   const tags = (userTags || []).map((t) => ({
     id: t.id,

@@ -281,3 +281,32 @@ export async function updateNote(
   notifyListeners();
   return res;
 }
+
+/**
+ * Delete a private tag permanently
+ */
+export async function deleteTag(idOrName: string): Promise<boolean> {
+  const clean = idOrName.toLowerCase().trim().replace(/^#/, '');
+  // Optimistically remove from memoryTags
+  memoryTags = memoryTags.filter((t) => t.id !== idOrName && t.name.toLowerCase() !== clean);
+
+  // Optimistically remove tag from cached notes in RAM
+  feedCaches.all = feedCaches.all.map((note) => ({
+    ...note,
+    tags: (note.tags || []).filter((t) => t.id !== idOrName && t.name.toLowerCase() !== clean),
+  }));
+  feedCaches.tagged_me = feedCaches.tagged_me.map((note) => ({
+    ...note,
+    tags: (note.tags || []).filter((t) => t.id !== idOrName && t.name.toLowerCase() !== clean),
+  }));
+  notifyListeners();
+
+  const ok = await api.deleteTag(idOrName);
+  if (ok) {
+    api.getTags().then((tags) => {
+      memoryTags = tags;
+      notifyListeners();
+    }).catch(() => {});
+  }
+  return ok;
+}

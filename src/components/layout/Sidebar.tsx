@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Tag, User } from '../../lib/types';
 import {
   Search,
@@ -10,7 +10,9 @@ import {
   Users,
   X,
   Edit3,
+  Trash2,
 } from 'lucide-react';
+import { Modal } from '../ui/Modal';
 
 interface SidebarProps {
   tags: Tag[];
@@ -27,6 +29,7 @@ interface SidebarProps {
   onOperatorChange: (op: 'AND' | 'OR') => void;
   onSelectFilter: (type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention', value?: string) => void;
   onOpenEditProfile?: () => void;
+  onDeleteTag?: (tagId: string, tagName: string) => void;
   mentionsCount: number;
   allNotesCount: number;
   untaggedCount: number;
@@ -46,6 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOperatorChange,
   onSelectFilter,
   onOpenEditProfile,
+  onDeleteTag,
   mentionsCount,
   allNotesCount,
   untaggedCount,
@@ -55,6 +59,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Separate current user from other colleagues in the directory
   const currentUserId = currentUser?.id;
   const otherTeammates = teammates.filter((u) => u.id !== currentUserId);
+
+  // Tag Deletion Confirmation Modal state
+  const [isConfirmDeleteTagOpen, setIsConfirmDeleteTagOpen] = useState(false);
+  const [tagToDelete, setTagToDelete] = useState<Tag | null>(null);
+
+  const handleConfirmDeleteTag = () => {
+    if (tagToDelete && onDeleteTag) {
+      onDeleteTag(tagToDelete.id, tagToDelete.name);
+    }
+    setIsConfirmDeleteTagOpen(false);
+    setTagToDelete(null);
+  };
 
   const sidebarContent = (
     <div className="flex flex-col h-full py-4 px-3 select-none">
@@ -215,25 +231,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
               tags.map((t) => {
                 const isActive = activeFilter.type === 'tag' && activeFilter.value === t.name;
                 return (
-                  <button
+                  <div
                     key={t.id}
-                    onClick={() => onSelectFilter('tag', t.name)}
-                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-colors cursor-pointer ${
+                    className={`group/tag flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-colors ${
                       isActive
                         ? 'bg-surface text-primary font-semibold shadow-subtle hairline-border'
                         : 'text-ink-muted hover:text-ink hover:bg-surface/50'
                     }`}
                   >
-                    <span className="flex items-center gap-1.5 truncate">
+                    <button
+                      type="button"
+                      onClick={() => onSelectFilter('tag', t.name)}
+                      className="flex-1 flex items-center gap-1.5 truncate text-left cursor-pointer min-w-0"
+                    >
                       <Hash className="w-3 h-3 text-primary/70 shrink-0" />
                       <span className="truncate">{t.name}</span>
-                    </span>
-                    {t.count !== undefined && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-canvas text-ink-muted shrink-0">
-                        {t.count}
-                      </span>
-                    )}
-                  </button>
+                    </button>
+
+                    <div className="flex items-center gap-1 shrink-0 ml-1">
+                      {t.count !== undefined && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-canvas text-ink-muted font-mono">
+                          {t.count}
+                        </span>
+                      )}
+                      {onDeleteTag && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTagToDelete(t);
+                            setIsConfirmDeleteTagOpen(true);
+                          }}
+                          className="opacity-0 group-hover/tag:opacity-100 p-0.5 text-ink-subtle hover:text-status-error transition-opacity cursor-pointer rounded"
+                          title={`Delete tag #${t.name}`}
+                          aria-label={`Delete tag #${t.name}`}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 );
               })
             )}
@@ -350,6 +387,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       )}
+
+      {/* Delete Tag Confirmation Modal */}
+      <Modal
+        isOpen={isConfirmDeleteTagOpen}
+        onClose={() => {
+          setIsConfirmDeleteTagOpen(false);
+          setTagToDelete(null);
+        }}
+        title="Delete Private Tag"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-ink leading-normal">
+            Are you sure you want to permanently delete tag{' '}
+            <strong className="text-primary font-mono">#{tagToDelete?.name}</strong>?
+            This will remove it from your private tags list and detach it from all thoughts.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsConfirmDeleteTagOpen(false);
+                setTagToDelete(null);
+              }}
+              className="px-3 py-2 text-xs font-medium text-ink-muted hover:text-ink cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteTag}
+              className="px-4 py-2 text-xs font-medium text-white bg-status-error hover:bg-red-700 rounded-xl transition-colors cursor-pointer"
+            >
+              Delete Permanently
+            </button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 };

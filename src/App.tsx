@@ -12,11 +12,13 @@ import {
   markMentionsAsRead,
   createNote,
   deleteNote,
+  deleteTag,
   updateNote,
   subscribeToStorage,
   syncFromServer,
   switchFeed,
 } from './lib/storage';
+import { exportNotesToExcel } from './lib/excelExport';
 import { api } from './lib/api';
 import { supabase } from './lib/supabase';
 import { parseSearchQuery, filterNotes } from './lib/search';
@@ -195,6 +197,35 @@ export function App() {
     addToast('Thought deleted.', 'info');
   };
 
+  const handleDeleteTag = async (tagId: string, tagName: string) => {
+    const ok = await deleteTag(tagId);
+    if (ok) {
+      addToast(`Tag #${tagName} deleted.`, 'info');
+      if (activeFilter.type === 'tag' && activeFilter.value?.toLowerCase() === tagName.toLowerCase()) {
+        setActiveFilter({ type: 'all' });
+      }
+    } else {
+      addToast(`Failed to delete tag #${tagName}.`, 'error');
+    }
+  };
+
+  const handleExportExcel = () => {
+    const userNotes = getNotes('all');
+    if (!userNotes || userNotes.length === 0) {
+      addToast('No thoughts to export yet. Capture a thought first!', 'info');
+      return;
+    }
+    addToast('Generating Excel backup...', 'info');
+    const success = exportNotesToExcel(userNotes, {
+      userHandle: currentUser?.username,
+    });
+    if (success) {
+      addToast(`Downloaded Excel backup (${userNotes.length} thoughts)!`, 'success');
+    } else {
+      addToast('Failed to generate Excel backup.', 'error');
+    }
+  };
+
   const handleUpdateNote = (id: string, newContent: string, manualTags?: string[]) => {
     return updateNote(id, newContent, manualTags);
   };
@@ -291,6 +322,7 @@ export function App() {
         onLogout={handleLogout}
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenEditProfile={() => setIsUsernameModalOpen(true)}
+        onExportExcel={handleExportExcel}
       />
 
       <div className="flex-1 max-w-7xl w-full mx-auto flex items-start">
@@ -307,6 +339,7 @@ export function App() {
           onOperatorChange={setSearchOperator}
           onSelectFilter={handleSelectFilter}
           onOpenEditProfile={() => setIsUsernameModalOpen(true)}
+          onDeleteTag={handleDeleteTag}
           mentionsCount={mentionsCount}
           allNotesCount={myNotesCount}
           untaggedCount={untaggedCount}
@@ -406,6 +439,7 @@ export function App() {
           onDeleteNote={handleDeleteNote}
           onUpdateNote={handleUpdateNote}
           teammates={teammates}
+          allTags={tags}
           onAddToast={addToast}
         />
       </div>

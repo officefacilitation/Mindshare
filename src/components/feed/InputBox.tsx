@@ -188,7 +188,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
 
     const lastTriggerPos = Math.max(lastHash, lastAt);
 
-    if (lastTriggerPos !== -1 && lastTriggerPos >= textBeforeCaret.length - 20) {
+    if (lastTriggerPos !== -1 && lastTriggerPos >= textBeforeCaret.length - 32) {
       const char = val[lastTriggerPos];
       const query = textBeforeCaret.substring(lastTriggerPos + 1);
 
@@ -267,7 +267,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
   // Filter tag suggestions from user's private tags
   const filteredTagSuggestions = allTags
     .filter((t) => t.name.toLowerCase().includes(autocompleteQuery))
-    .slice(0, 5);
+    .slice(0, 8);
 
   // Filter teammate mentions from real registered team accounts
   const filteredTeammateSuggestions = allTeammates
@@ -489,24 +489,31 @@ export const InputBox: React.FC<InputBoxProps> = ({
 
           {autocompleteMode === 'tag' && (
             <div>
-              {filteredTagSuggestions.length === 0 ? (
+              {filteredTagSuggestions.map((t) => (
                 <div
-                  onClick={() => handleSelectAutocomplete(autocompleteQuery)}
-                  className="px-3.5 py-2.5 min-h-[38px] text-xs text-primary hover:bg-primary-light active:bg-primary-light cursor-pointer flex items-center gap-1.5"
+                  key={t.id}
+                  onClick={() => handleSelectAutocomplete(t.name)}
+                  className="px-3.5 py-2 min-h-[36px] text-xs text-ink hover:bg-canvas active:bg-hairline cursor-pointer flex items-center justify-between"
                 >
-                  <Hash className="w-3.5 h-3.5" /> Create new tag #{autocompleteQuery}
+                  <span className="font-medium">#{t.name}</span>
+                  <span className="text-[10px] text-ink-subtle">{t.count || 0} notes</span>
                 </div>
-              ) : (
-                filteredTagSuggestions.map((t) => (
+              ))}
+
+              {autocompleteQuery.trim().length >= 2 &&
+                !filteredTagSuggestions.some((t) => t.name.toLowerCase() === autocompleteQuery.trim().toLowerCase()) && (
                   <div
-                    key={t.id}
-                    onClick={() => handleSelectAutocomplete(t.name)}
-                    className="px-3.5 py-2 min-h-[36px] text-xs text-ink hover:bg-canvas active:bg-hairline cursor-pointer flex items-center justify-between"
+                    onClick={() => handleSelectAutocomplete(autocompleteQuery.trim())}
+                    className="px-3.5 py-2.5 min-h-[38px] text-xs text-primary hover:bg-primary-light active:bg-primary-light cursor-pointer flex items-center gap-1.5 hairline-t"
                   >
-                    <span className="font-medium">#{t.name}</span>
-                    <span className="text-[10px] text-ink-subtle">{t.count || 0} notes</span>
+                    <Hash className="w-3.5 h-3.5" /> Create new tag #{autocompleteQuery.trim()}
                   </div>
-                ))
+                )}
+
+              {filteredTagSuggestions.length === 0 && autocompleteQuery.trim().length < 2 && (
+                <div className="px-3.5 py-2.5 text-xs text-ink-subtle italic">
+                  Type 2+ letters to search or create tags...
+                </div>
               )}
             </div>
           )}
