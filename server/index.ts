@@ -908,7 +908,7 @@ app.get('/api/tags', async (req: AuthRequest, res: Response) => {
 // ========================================================
 // Hardcoded Google Apps Script Webhook URL (shared across all users)
 // You can set your deployed Web App URL directly here or in .env.local
-const HARDCODED_GOOGLE_WEBHOOK_URL = '';
+const HARDCODED_GOOGLE_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwKfFJ2a7pbg0ptKWusTUjELFLISxvK3zVcGeMWU6eVxY4fjYJ-ml7j463caTTTbKy1Dw/exec';
 const googleWebhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL || HARDCODED_GOOGLE_WEBHOOK_URL || '';
 
 async function syncAllUsersToGoogleDrive(customUrl?: string): Promise<{ success: boolean; totalUsers: number; message: string; data?: any }> {
