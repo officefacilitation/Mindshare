@@ -906,12 +906,19 @@ app.get('/api/tags', async (req: AuthRequest, res: Response) => {
 // ========================================================
 // AUTOMATED GOOGLE DRIVE PER-USER SPREADSHEET BACKUP
 // ========================================================
-const googleWebhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL || '';
+// Hardcoded Google Apps Script Webhook URL (shared across all users)
+// You can set your deployed Web App URL directly here or in .env.local
+const HARDCODED_GOOGLE_WEBHOOK_URL = '';
+const googleWebhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL || HARDCODED_GOOGLE_WEBHOOK_URL || '';
 
 async function syncAllUsersToGoogleDrive(customUrl?: string): Promise<{ success: boolean; totalUsers: number; message: string; data?: any }> {
-  const targetUrl = customUrl || googleWebhookUrl;
+  const targetUrl = customUrl || googleWebhookUrl || HARDCODED_GOOGLE_WEBHOOK_URL;
   if (!targetUrl) {
-    return { success: false, totalUsers: 0, message: 'Google Sheets Webhook URL is not configured.' };
+    return { 
+      success: false, 
+      totalUsers: 0, 
+      message: 'Google Sheets Webhook URL is not configured. Please set GOOGLE_SHEETS_WEBHOOK_URL in .env.local or server/index.ts.' 
+    };
   }
 
   if (!supabase) {

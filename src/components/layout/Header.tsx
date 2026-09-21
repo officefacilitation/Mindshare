@@ -247,9 +247,9 @@ export const Header: React.FC<HeaderProps> = ({
                             onSyncGoogleDrive();
                           }}
                           className="w-full py-2 px-3 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 active:scale-98 rounded-xl hairline-border flex items-center justify-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
-                          title="Sync each user's thoughts to individual Google Drive sheets"
+                          title="Sync all team thoughts to Google Drive"
                         >
-                          <CloudUpload className="w-3.5 h-3.5" /> Google Drive Per-User Sync
+                          <CloudUpload className="w-3.5 h-3.5" /> Sync to Google Drive
                         </button>
                       )}
 

@@ -31,14 +31,13 @@ import { ToastContainer } from './components/ui/Toast';
 import { Login } from './components/auth/Login';
 import { UsernameModal } from './components/auth/UsernameModal';
 import { GuideModal } from './components/ui/GuideModal';
-import { GoogleDriveSyncModal } from './components/ui/GoogleDriveSyncModal';
 import { Inbox, Bell, Sparkles } from 'lucide-react';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
   const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false);
-  const [isGoogleDriveModalOpen, setIsGoogleDriveModalOpen] = useState(false);
+  const [isSyncingDrive, setIsSyncingDrive] = useState(false);
 
   const [notes, setNotes] = useState<Note[]>(() => getNotes());
   const [tags, setTags] = useState<Tag[]>(() => getTags());
@@ -228,6 +227,24 @@ export function App() {
     }
   };
 
+  const handleSyncGoogleDrive = async () => {
+    if (isSyncingDrive) return;
+    setIsSyncingDrive(true);
+    addToast('Syncing all team thoughts to Google Drive sheets...', 'info');
+    try {
+      const res = await api.syncGoogleDriveBackup();
+      if (res.success) {
+        addToast(res.message || 'Successfully synced all team members to Google Drive!', 'success');
+      } else {
+        addToast(res.message || 'Google Drive sync failed. Please check webhook configuration.', 'error');
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Network error syncing to Google Drive.', 'error');
+    } finally {
+      setIsSyncingDrive(false);
+    }
+  };
+
   const handleUpdateNote = (id: string, newContent: string, manualTags?: string[]) => {
     return updateNote(id, newContent, manualTags);
   };
@@ -325,7 +342,7 @@ export function App() {
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenEditProfile={() => setIsUsernameModalOpen(true)}
         onExportExcel={handleExportExcel}
-        onSyncGoogleDrive={() => setIsGoogleDriveModalOpen(true)}
+        onSyncGoogleDrive={handleSyncGoogleDrive}
       />
 
       <div className="flex-1 max-w-7xl w-full mx-auto flex items-start">
@@ -461,11 +478,6 @@ export function App() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <GuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
-      <GoogleDriveSyncModal
-        isOpen={isGoogleDriveModalOpen}
-        onClose={() => setIsGoogleDriveModalOpen(false)}
-        onAddToast={addToast}
-      />
     </div>
   );
 }
