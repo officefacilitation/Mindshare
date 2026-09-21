@@ -903,6 +903,155 @@ app.get('/api/tags', async (req: AuthRequest, res: Response) => {
   res.json({ tags });
 });
 
+// ========================================================
+// AUTOMATED GOOGLE DRIVE PER-USER SPREADSHEET BACKUP
+// ========================================================
+const googleWebhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL || '';
+
+async function syncAllUsersToGoogleDrive(customUrl?: string): Promise<{ success: boolean; totalUsers: number; message: string; data?: any }> {
+  const targetUrl = customUrl || googleWebhookUrl;
+  if (!targetUrl) {
+    return { success: false, totalUsers: 0, message: 'Google Sheets Webhook URL is not configured.' };
+  }
+
+  if (!supabase) {
+    return { success: false, totalUsers: 0, message: 'Supabase client is not available.' };
+  }
+
+  try {
+    // 1. Fetch all registered users (both existing and new)
+    const { data: allUsers, error: usersErr } = await supabase
+      .from('users')
+      .select('id, username, full_name, email')
+      .order('username', { ascending: true });
+
+    if (usersErr) {
+      throw new Error(`Failed to fetch users: ${usersErr.message}`);
+    }
+
+    // 2. Fetch all active notes
+    const { data: allNotes, error: notesErr } = await supabase
+      .from('notes')
+      .select(`
+        id,
+        user_id,
+        content,
+        created_at,
+        updated_at,
+        note_tags ( tags ( name ) ),
+        mentions ( users ( username ) )
+      `)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+
+    if (notesErr) {
+      throw new Error(`Failed to fetch notes: ${notesErr.message}`);
+    }
+
+    // Group notes by user_id
+    const userNotesMap: Record<string, any[]> = {};
+    (allUsers || []).forEach((u: any) => {
+      userNotesMap[u.id] = [];
+    });
+
+    const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
+
+    (allNotes || []).forEach((n: any) => {
+      if (userNotesMap[n.user_id]) {
+        // Extract media URLs
+        const mediaUrls: string[] = [];
+        let m;
+        const regexClone = new RegExp(imageRegex.source, 'gi');
+        while ((m = regexClone.exec(n.content)) !== null) {
+          const u = m[1] || m[2];
+          if (u && !mediaUrls.includes(u)) mediaUrls.push(u);
+        }
+
+        const cleanText = n.content.replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '').trim();
+
+        userNotesMap[n.user_id].push({
+          id: n.id,
+          created_at: n.created_at,
+          updated_at: n.updated_at,
+          content: cleanText,
+          tags: (n.note_tags || []).map((nt: any) => nt.tags?.name).filter(Boolean),
+          mentions: (n.mentions || []).map((m: any) => m.users?.username).filter(Boolean),
+          media_urls: mediaUrls,
+        });
+      }
+    });
+
+    const payload = {
+      users: (allUsers || []).map((u: any) => ({
+        id: u.id,
+        username: u.username || 'user',
+        full_name: u.full_name || '',
+        email: u.email || '',
+        notes: userNotesMap[u.id] || [],
+      })),
+    };
+
+    const response = await fetch(targetUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json().catch(() => ({ success: response.ok }));
+
+    return {
+      success: response.ok,
+      totalUsers: payload.users.length,
+      message: `Successfully synced ${payload.users.length} users to individual Google Drive sheets!`,
+      data: result,
+    };
+  } catch (err: any) {
+    console.error('[Google Drive Sync Error]:', err.message);
+    return { success: false, totalUsers: 0, message: err.message };
+  }
+}
+
+// Midnight Recurring Timer Scheduler
+function scheduleMidnightSync() {
+  const now = new Date();
+  const nextMidnight = new Date(now);
+  nextMidnight.setHours(24, 0, 0, 0); // Next 00:00:00
+  const msUntilMidnight = nextMidnight.getTime() - now.getTime();
+
+  console.log(`⏰ [Midnight Timer] Google Drive sync scheduled in ${Math.round(msUntilMidnight / 60000)} minutes (at 00:00).`);
+
+  setTimeout(() => {
+    console.log('🌙 [Midnight Timer Fired] Triggering automated Google Drive sync for all users...');
+    syncAllUsersToGoogleDrive().then((res) => {
+      console.log(`✅ [Midnight Timer Complete]: ${res.message}`);
+    });
+    // Repeat every 24 hours
+    setInterval(() => {
+      console.log('🌙 [Midnight Timer Fired] Triggering automated Google Drive sync for all users...');
+      syncAllUsersToGoogleDrive().then((res) => {
+        console.log(`✅ [Midnight Timer Complete]: ${res.message}`);
+      });
+    }, 24 * 60 * 60 * 1000);
+  }, msUntilMidnight);
+}
+
+// Start Midnight Timer
+scheduleMidnightSync();
+
+// API Endpoints for Google Drive Sync
+app.post('/api/backup/google-drive-sync', async (req: AuthRequest, res: Response) => {
+  const { webhookUrl } = req.body || {};
+  const result = await syncAllUsersToGoogleDrive(webhookUrl);
+  res.json(result);
+});
+
+app.get('/api/backup/google-drive-status', (_req: Request, res: Response) => {
+  res.json({
+    configured: Boolean(googleWebhookUrl),
+    midnightScheduled: true,
+  });
+});
+
 if (!isSupabaseConfigured) {
   console.warn('⚠️  Server running WITHOUT Supabase config. Data endpoints will return 500.');
 }

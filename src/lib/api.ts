@@ -302,4 +302,28 @@ export const api = {
       return { error: 'Network error uploading image' };
     }
   },
+
+  // Google Drive Per-User Sheet Sync (Style 2)
+  async syncGoogleDriveBackup(webhookUrl?: string): Promise<{ success: boolean; totalUsers?: number; message?: string; data?: any; error?: string }> {
+    try {
+      const { ok, data } = await request('/backup/google-drive-sync', {
+        method: 'POST',
+        body: JSON.stringify({ webhookUrl }),
+      });
+      if (!ok) return { success: false, error: data?.error || data?.message || 'Failed to sync to Google Drive' };
+      return { success: data?.success ?? true, totalUsers: data?.totalUsers, message: data?.message, data: data?.data };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Network error syncing to Google Drive' };
+    }
+  },
+
+  async getGoogleDriveStatus(): Promise<{ configured: boolean; midnightScheduled: boolean }> {
+    try {
+      const { ok, data } = await request('/backup/google-drive-status');
+      if (ok && data) return data;
+      return { configured: false, midnightScheduled: false };
+    } catch {
+      return { configured: false, midnightScheduled: false };
+    }
+  },
 };

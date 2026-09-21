@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Brain, Menu, LogOut, HelpCircle, Edit3, X, ShieldCheck, Volume2, VolumeX, FileSpreadsheet } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Brain, Menu, LogOut, HelpCircle, Edit3, X, ShieldCheck, Volume2, VolumeX, FileSpreadsheet, CloudUpload } from 'lucide-react';
 import { User } from '../../lib/types';
 import { isSoundEnabled, toggleSoundEnabled } from '../../lib/sound';
 
@@ -13,6 +13,7 @@ interface HeaderProps {
   onOpenGuide: () => void;
   onOpenEditProfile: () => void;
   onExportExcel?: () => void;
+  onSyncGoogleDrive?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -25,9 +26,38 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenGuide,
   onOpenEditProfile,
   onExportExcel,
+  onSyncGoogleDrive,
 }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
+  const profileContainerRef = useRef<HTMLDivElement>(null);
+
+  // Close profile dropdown when clicking outside or pressing Escape
+  useEffect(() => {
+    if (!isProfileOpen) return;
+
+    const handlePointerDown = (e: MouseEvent | TouchEvent) => {
+      if (profileContainerRef.current && !profileContainerRef.current.contains(e.target as Node)) {
+        setIsProfileOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsProfileOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isProfileOpen]);
 
   const initials = (currentUser?.full_name || currentUser?.username || 'U')
     .split(' ')
@@ -82,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Current User Badge (Clickable for full profile & ID card) */}
           {currentUser && (
-            <div className="relative">
+            <div className="relative" ref={profileContainerRef}>
               <button
                 type="button"
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
@@ -206,6 +236,20 @@ export const Header: React.FC<HeaderProps> = ({
                           title="Download Excel backup of all your thoughts"
                         >
                           <FileSpreadsheet className="w-3.5 h-3.5" /> Export Notes (.xlsx Backup)
+                        </button>
+                      )}
+
+                      {onSyncGoogleDrive && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsProfileOpen(false);
+                            onSyncGoogleDrive();
+                          }}
+                          className="w-full py-2 px-3 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 active:scale-98 rounded-xl hairline-border flex items-center justify-center gap-1.5 transition-colors cursor-pointer min-h-[38px]"
+                          title="Sync each user's thoughts to individual Google Drive sheets"
+                        >
+                          <CloudUpload className="w-3.5 h-3.5" /> Google Drive Per-User Sync
                         </button>
                       )}
 

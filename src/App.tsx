@@ -31,12 +31,14 @@ import { ToastContainer } from './components/ui/Toast';
 import { Login } from './components/auth/Login';
 import { UsernameModal } from './components/auth/UsernameModal';
 import { GuideModal } from './components/ui/GuideModal';
+import { GoogleDriveSyncModal } from './components/ui/GoogleDriveSyncModal';
 import { Inbox, Bell, Sparkles } from 'lucide-react';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthed, setIsAuthed] = useState<boolean | null>(null);
   const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false);
+  const [isGoogleDriveModalOpen, setIsGoogleDriveModalOpen] = useState(false);
 
   const [notes, setNotes] = useState<Note[]>(() => getNotes());
   const [tags, setTags] = useState<Tag[]>(() => getTags());
@@ -323,6 +325,7 @@ export function App() {
         onOpenGuide={() => setIsGuideOpen(true)}
         onOpenEditProfile={() => setIsUsernameModalOpen(true)}
         onExportExcel={handleExportExcel}
+        onSyncGoogleDrive={() => setIsGoogleDriveModalOpen(true)}
       />
 
       <div className="flex-1 max-w-7xl w-full mx-auto flex items-start">
@@ -458,6 +461,11 @@ export function App() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <GuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
+      <GoogleDriveSyncModal
+        isOpen={isGoogleDriveModalOpen}
+        onClose={() => setIsGoogleDriveModalOpen(false)}
+        onAddToast={addToast}
+      />
     </div>
   );
 }
