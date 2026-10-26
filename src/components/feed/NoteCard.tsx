@@ -58,6 +58,14 @@ export const NoteCard: React.FC<NoteCardProps> = ({
       }
     });
 
+    if (curr && !list.some((p) => p.username === curr)) {
+      list.push({
+        username: curr,
+        isAuthor: false,
+        isCurrent: true,
+      });
+    }
+
     return list;
   }, [note.reminder_at, note.author, note.mentions, isOwner, currentUsername]);
 
@@ -187,11 +195,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
 
           <div className="flex-1 min-w-0">
             {cleanedText && (
-              <div
-                className={`text-sm font-sans leading-relaxed whitespace-pre-wrap break-words transition-all ${
-                  isCurrentDone || note.is_completed ? 'line-through text-ink-muted' : 'text-ink'
-                }`}
-              >
+              <div className="text-sm font-sans leading-relaxed whitespace-pre-wrap break-words text-ink">
                 {displayContent}
                 {shouldTruncate && (
                   <button
@@ -203,6 +207,26 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                   >
                     {isExpanded ? 'Show less' : 'Read more'}
                   </button>
+                )}
+                {note.reminder_at && (note.is_completed || completedList.length > 0) && (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                    {note.is_completed ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hairline-border border-emerald-500/30 shadow-xs">
+                        <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[3]" />
+                        <span>Completed by all assignees</span>
+                      </span>
+                    ) : (
+                      completedList.map((uname) => (
+                        <span
+                          key={uname}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hairline-border border-emerald-500/30 shadow-xs"
+                        >
+                          <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[3]" />
+                          <span>Done by @{uname}</span>
+                        </span>
+                      ))
+                    )}
+                  </div>
                 )}
               </div>
             )}

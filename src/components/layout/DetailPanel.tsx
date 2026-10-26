@@ -160,6 +160,14 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
       }
     });
 
+    if (curr && !list.some((p) => p.username === curr)) {
+      list.push({
+        username: curr,
+        isAuthor: false,
+        isCurrent: true,
+      });
+    }
+
     return list;
   }, [note?.reminder_at, note?.author, note?.mentions, isOwner, currentUsername]);
 
@@ -840,7 +848,7 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className={`text-xs font-semibold truncate ${note.is_completed
-                        ? 'text-status-success line-through'
+                        ? 'text-status-success'
                         : isOverdue
                           ? 'text-rose-600 dark:text-rose-400 font-bold'
                           : 'text-rose-600 dark:text-rose-400'

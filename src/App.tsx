@@ -167,8 +167,11 @@ export function App() {
       setHasUnreadMentions(getHasUnreadMentions());
 
       if (selectedNote) {
-        const found = updatedNotes.find((n) => n.id === selectedNote.id);
-        setSelectedNote(found || null);
+        const allCached = [...getNotes('all'), ...getNotes('tagged_me')];
+        const found = allCached.find((n) => n.id === selectedNote.id);
+        if (found) {
+          setSelectedNote(found);
+        }
       }
     });
     return () => unsubscribe();

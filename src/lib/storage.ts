@@ -418,6 +418,9 @@ export async function toggleCompleteNote(
   isCompleted: boolean,
   username?: string
 ): Promise<boolean> {
+  const beforeAll = feedCaches.all;
+  const beforeTagged = feedCaches.tagged_me;
+
   // Optimistically update in RAM immediately
   const updateList = (list: Note[]) =>
     list.map((n) => {
@@ -443,14 +446,20 @@ export async function toggleCompleteNote(
   notifyListeners();
 
   const res = await api.toggleComplete(id, isCompleted, username);
-  if (res.note) {
-    const syncExact = (list: Note[]) =>
-      list.map((n) => (n.id === id ? { ...n, ...res.note } : n));
-    feedCaches.all = syncExact(feedCaches.all);
-    feedCaches.tagged_me = syncExact(feedCaches.tagged_me);
+  if (!res.success || !res.note) {
+    // Rollback to prior state if backend rejected the update
+    feedCaches.all = beforeAll;
+    feedCaches.tagged_me = beforeTagged;
     notifyListeners();
+    return false;
   }
-  return res.success;
+
+  const syncExact = (list: Note[]) =>
+    list.map((n) => (n.id === id ? { ...n, ...res.note } : n));
+  feedCaches.all = syncExact(feedCaches.all);
+  feedCaches.tagged_me = syncExact(feedCaches.tagged_me);
+  notifyListeners();
+  return true;
 }
 
 /**

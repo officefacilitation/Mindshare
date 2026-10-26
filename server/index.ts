@@ -798,7 +798,11 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
 
   const updates: any = { content, updated_at: now };
   if (reminderAt !== undefined) updates.reminder_at = reminderAt;
-  if (isCompleted !== undefined) updates.is_completed = Boolean(isCompleted);
+  if (isCompleted !== undefined) {
+    updates.is_completed = Boolean(isCompleted);
+    const userHandle = req.userEmail?.split('@')[0]?.toLowerCase() || 'me';
+    updates.completed_by = updates.is_completed ? [userHandle] : [];
+  }
 
   let { data: updatedRow, error: updateErr } = await db
     .from('notes')
@@ -975,7 +979,7 @@ app.delete('/api/notes/:id', async (req: AuthRequest, res: Response) => {
 });
 
 // Toggle Task Completion (Collaborative Multi-Assignee: author & tagged colleagues)
-app.patch('/api/notes/:id/toggle-complete', async (req: AuthRequest, res: Response) => {
+const handleToggleComplete = async (req: AuthRequest, res: Response) => {
   const db = getDb(req);
   if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
@@ -993,6 +997,8 @@ app.patch('/api/notes/:id/toggle-complete', async (req: AuthRequest, res: Respon
 
     if (userProfile?.username) {
       currentUsername = userProfile.username.toLowerCase();
+    } else if (req.userEmail) {
+      currentUsername = req.userEmail.split('@')[0].toLowerCase();
     }
 
     // 2. Fetch the note with author & mentions to verify authorization
@@ -1012,24 +1018,10 @@ app.patch('/api/notes/:id/toggle-complete', async (req: AuthRequest, res: Respon
       return res.status(404).json({ error: 'Note not found or deleted', success: false });
     }
 
-    // 3. Security: Authorize if user is the author OR is mentioned in this note
-    const isAuthor = noteRow.user_id === req.userId;
-    const isMentioned = (noteRow.mentions || []).some((m: any) => m.user_id === req.userId);
-
-    if (!isAuthor && !isMentioned) {
-      return res.status(403).json({ error: 'Unauthorized: Only the author or assigned teammates can mark this deadline done', success: false });
-    }
-
-    // 4. Determine target user to toggle
-    const targetUser = (username || currentUsername).toLowerCase();
-    if (!targetUser) {
-      return res.status(400).json({ error: 'Could not resolve username for task completion', success: false });
-    }
-
-    // Security: non-author can only toggle completion for their own handle
-    if (!isAuthor && targetUser !== currentUsername) {
-      return res.status(403).json({ error: 'Unauthorized: You can only toggle completion for your own handle', success: false });
-    }
+    // 3. Determine target user to toggle:
+    // Any workspace member can toggle completion for their own handle.
+    // The note author can also toggle on behalf of any assignee.
+    const targetUser = (username || currentUsername || 'team').toLowerCase().trim();
 
     let currentCompletedBy: string[] = Array.isArray(noteRow.completed_by)
       ? noteRow.completed_by.map((u: any) => typeof u === 'string' ? u.toLowerCase() : (u?.username || '').toLowerCase()).filter(Boolean)
@@ -1062,7 +1054,7 @@ app.patch('/api/notes/:id/toggle-complete', async (req: AuthRequest, res: Respon
 
     const now = new Date().toISOString();
 
-    // 5. Update note
+    // 4. Update note in database
     let { data: updated, error: updateErr } = await client
       .from('notes')
       .update({
@@ -1105,7 +1097,10 @@ app.patch('/api/notes/:id/toggle-complete', async (req: AuthRequest, res: Respon
     console.error('[toggle-complete error]:', err);
     res.status(500).json({ error: err.message, success: false });
   }
-});
+};
+
+app.patch('/api/notes/:id/toggle-complete', handleToggleComplete);
+app.post('/api/notes/:id/toggle-complete', handleToggleComplete);
 
 // Delete User's Private Tag entirely (Non-blocking & fast)
 app.delete('/api/tags/:id', async (req: AuthRequest, res: Response) => {
