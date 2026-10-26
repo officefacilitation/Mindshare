@@ -29,9 +29,9 @@ export function parseSearchQuery(queryStr: string): SearchQuery {
   // Pre-normalize NOT operators:
   // "NOT #tag" -> "-#tag", "NOT @user" -> "-@user", "NOT word" -> "-word"
   let processed = raw
-    .replace(/\bNOT\s+#([a-zA-Z0-9_\-]+)/gi, ' -#$1 ')
-    .replace(/\bNOT\s+@([a-zA-Z0-9._\-]+)/gi, ' -@$1 ')
-    .replace(/\bNOT\s+([a-zA-Z0-9_\-]+)/gi, ' -$1 ');
+    .replace(/\bNOT\s+#([a-zA-Z0-9_-]+)/gi, ' -#$1 ')
+    .replace(/\bNOT\s+@([a-zA-Z0-9._-]+)/gi, ' -@$1 ')
+    .replace(/\bNOT\s+([a-zA-Z0-9_-]+)/gi, ' -$1 ');
 
   // Normalize boolean operators: & / && -> AND, | / || -> OR
   processed = processed
@@ -45,14 +45,14 @@ export function parseSearchQuery(queryStr: string): SearchQuery {
   const operator: 'AND' | 'OR' = isOr ? 'OR' : 'AND';
 
   // Extract Excluded Tags: -#tag or !#tag
-  const excludeTagMatches = processed.match(/[-!]#[a-zA-Z0-9_\-]{2,30}/g) || [];
+  const excludeTagMatches = processed.match(/[-!]#[a-zA-Z0-9_-]{2,30}/g) || [];
   const excludeTags = Array.from(new Set(excludeTagMatches.map((t) => t.substring(2).toLowerCase())));
-  processed = processed.replace(/[-!]#[a-zA-Z0-9_\-]{2,30}/g, ' ');
+  processed = processed.replace(/[-!]#[a-zA-Z0-9_-]{2,30}/g, ' ');
 
   // Extract Excluded Mentions: -@username or !@username
-  const excludeMentionMatches = processed.match(/[-!]@[a-zA-Z0-9._\-]{2,30}/g) || [];
+  const excludeMentionMatches = processed.match(/[-!]@[a-zA-Z0-9._-]{2,30}/g) || [];
   const excludeMentions = Array.from(new Set(excludeMentionMatches.map((m) => m.substring(2).toLowerCase())));
-  processed = processed.replace(/[-!]@[a-zA-Z0-9._\-]{2,30}/g, ' ');
+  processed = processed.replace(/[-!]@[a-zA-Z0-9._-]{2,30}/g, ' ');
 
   // Extract Excluded Words: -word
   const excludeWordMatches = processed.match(/(?:^|\s)-([a-zA-Z0-9]{2,30})/g) || [];
@@ -62,14 +62,14 @@ export function parseSearchQuery(queryStr: string): SearchQuery {
   processed = processed.replace(/(?:^|\s)-([a-zA-Z0-9]{2,30})/g, ' ');
 
   // Extract Positive Tags: #tagname
-  const tagMatches = processed.match(/#[a-zA-Z0-9_\-]{2,30}/g) || [];
+  const tagMatches = processed.match(/#[a-zA-Z0-9_-]{2,30}/g) || [];
   const tags = Array.from(new Set(tagMatches.map((t) => t.substring(1).toLowerCase())));
-  processed = processed.replace(/#[a-zA-Z0-9_\-]{2,30}/g, ' ');
+  processed = processed.replace(/#[a-zA-Z0-9_-]{2,30}/g, ' ');
 
   // Extract Positive Mentions: @username
-  const mentionMatches = processed.match(/@[a-zA-Z0-9._\-]{2,30}/g) || [];
+  const mentionMatches = processed.match(/@[a-zA-Z0-9._-]{2,30}/g) || [];
   const mentions = Array.from(new Set(mentionMatches.map((m) => m.substring(1).toLowerCase())));
-  processed = processed.replace(/@[a-zA-Z0-9._\-]{2,30}/g, ' ');
+  processed = processed.replace(/@[a-zA-Z0-9._-]{2,30}/g, ' ');
 
   // Clean out operator keywords to get remaining free-text
   const freetext = processed

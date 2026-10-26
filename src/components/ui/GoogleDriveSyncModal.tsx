@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from './Modal';
 import { api } from '../../lib/api';
-import { CloudUpload, CheckCircle2, AlertCircle, Loader2, ExternalLink, HardDrive, Clock } from 'lucide-react';
+import { CloudUpload, CheckCircle2, Loader2, ExternalLink, HardDrive, Clock } from 'lucide-react';
 
 interface GoogleDriveSyncModalProps {
   isOpen: boolean;

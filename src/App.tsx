@@ -7,9 +7,10 @@ import {
   getMentionsCount,
   getMyNotesCount,
   getUntaggedCount,
+  getRemindersCount,
+  toggleCompleteNote,
   getIsFeedLoading,
   getHasUnreadMentions,
-  markMentionsAsRead,
   createNote,
   deleteNote,
   deleteTag,
@@ -18,6 +19,7 @@ import {
   syncFromServer,
   switchFeed,
 } from './lib/storage';
+import { initNotifications } from './lib/notifications';
 import { exportNotesToExcel } from './lib/excelExport';
 import { api } from './lib/api';
 import { supabase } from './lib/supabase';
@@ -31,7 +33,8 @@ import { ToastContainer } from './components/ui/Toast';
 import { Login } from './components/auth/Login';
 import { UsernameModal } from './components/auth/UsernameModal';
 import { GuideModal } from './components/ui/GuideModal';
-import { Inbox, Bell, Sparkles } from 'lucide-react';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { Inbox, Bell, Sparkles, Clock } from 'lucide-react';
 
 export function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -45,13 +48,14 @@ export function App() {
   const [mentionsCount, setMentionsCount] = useState<number>(() => getMentionsCount());
   const [myNotesCount, setMyNotesCount] = useState<number>(() => getMyNotesCount());
   const [untaggedCount, setUntaggedCount] = useState<number>(() => getUntaggedCount());
+  const [remindersCount, setRemindersCount] = useState<number>(() => getRemindersCount());
   const [isFeedLoading, setIsFeedLoading] = useState<boolean>(() => getIsFeedLoading());
   const [hasUnreadMentions, setHasUnreadMentions] = useState<boolean>(() => getHasUnreadMentions());
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOperator, setSearchOperator] = useState<'AND' | 'OR'>('AND');
   const [activeFilter, setActiveFilter] = useState<{
-    type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention';
+    type: 'all' | 'tagged_me' | 'untagged' | 'reminders' | 'tag' | 'mention';
     value?: string;
   }>({ type: 'all' });
 
@@ -82,13 +86,33 @@ export function App() {
     setMentionsCount(getMentionsCount());
     setMyNotesCount(getMyNotesCount());
     setUntaggedCount(getUntaggedCount());
+    setRemindersCount(getRemindersCount());
     setIsFeedLoading(getIsFeedLoading());
   }, [activeFilter.type]);
 
+  // Initialize Native Web Push & Service Worker on startup
+  useEffect(() => {
+    initNotifications();
+  }, []);
+
   // Load User Profile
   const loadProfile = useCallback(async () => {
+    // Check Supabase session metadata for Google profile picture
+    const { data: { session } } = await supabase.auth.getSession();
+    const meta = session?.user?.user_metadata || {};
+    const sessionAvatar =
+      meta.avatar_url ||
+      meta.picture ||
+      session?.user?.identities?.[0]?.identity_data?.avatar_url ||
+      session?.user?.identities?.[0]?.identity_data?.picture ||
+      null;
+
     const res = await api.getMe();
     if (res.user) {
+      if (!res.user.avatar_url && sessionAvatar) {
+        res.user.avatar_url = sessionAvatar;
+        api.updateProfile({ avatarUrl: sessionAvatar }).catch(() => {});
+      }
       setCurrentUser(res.user);
       setHasUnreadMentions(getHasUnreadMentions());
       // Prompt user to choose their handle if:
@@ -138,6 +162,7 @@ export function App() {
       setMentionsCount(getMentionsCount());
       setMyNotesCount(getMyNotesCount());
       setUntaggedCount(getUntaggedCount());
+      setRemindersCount(getRemindersCount());
       setIsFeedLoading(getIsFeedLoading());
       setHasUnreadMentions(getHasUnreadMentions());
 
@@ -186,8 +211,20 @@ export function App() {
     return { error: res.error || 'Failed to update username' };
   };
 
-  const handleSaveNote = async (content: string, manualTags?: string[]) => {
-    return createNote(content, manualTags);
+  const handleSaveNote = async (
+    content: string,
+    manualTags?: string[],
+    reminderAt?: string | null,
+    isCompleted?: boolean
+  ) => {
+    return createNote(content, manualTags, reminderAt, isCompleted);
+  };
+
+  const handleToggleCompleteNote = async (id: string, isCompleted: boolean, targetUsername?: string): Promise<boolean> => {
+    const u = targetUsername || currentUser?.username;
+    const ok = await toggleCompleteNote(id, isCompleted, u);
+    addToast(isCompleted ? `Task completed for @${u || 'you'}! ✓` : `Task marked active for @${u || 'you'}.`, 'info');
+    return ok;
   };
 
   const handleDeleteNote = async (id: string) => {
@@ -245,12 +282,22 @@ export function App() {
     }
   };
 
-  const handleUpdateNote = (id: string, newContent: string, manualTags?: string[]) => {
-    return updateNote(id, newContent, manualTags);
+  const handleUpdateNote = async (
+    id: string,
+    newContent: string,
+    manualTags?: string[],
+    reminderAt?: string | null,
+    isCompleted?: boolean
+  ) => {
+    const res = await updateNote(id, newContent, manualTags, reminderAt, isCompleted);
+    if (res.note && selectedNote?.id === id) {
+      setSelectedNote(res.note);
+    }
+    return res;
   };
 
   const handleSelectFilter = (
-    type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention',
+    type: 'all' | 'tagged_me' | 'untagged' | 'reminders' | 'tag' | 'mention',
     value?: string
   ) => {
     setActiveFilter({ type, value });
@@ -267,21 +314,54 @@ export function App() {
   };
 
   const handleTagClickFromCard = (tagName: string) => {
-    setSearchQuery(`#${tagName}`);
-    setActiveFilter({ type: 'all' });
+    setActiveFilter({ type: 'tag', value: tagName });
+    setSearchQuery('');
   };
 
   const handleMentionClickFromCard = (username: string) => {
-    setSearchQuery(`@${username}`);
-    setActiveFilter({ type: 'all' });
+    setActiveFilter({ type: 'mention', value: username });
+    setSearchQuery('');
   };
 
   // Filter notes based on active filter, boolean search query & operator
   const filteredNotes = useMemo(() => {
-    let result = [...notes];
+    let result: Note[] = [];
+
+    if (activeFilter.type === 'tagged_me') {
+      // Use real API response directly from tagged_me feed cache
+      result = getNotes('tagged_me');
+    } else if (activeFilter.type === 'reminders') {
+      // Deadlines tab: all notes with reminder_at from personal and tagged notes
+      const allNotes = getNotes('all');
+      const taggedNotes = getNotes('tagged_me');
+      const map = new Map<string, Note>();
+      allNotes.forEach((n) => map.set(n.id, n));
+      taggedNotes.forEach((n) => map.set(n.id, n));
+      result = Array.from(map.values())
+        .filter((n) => Boolean(n.reminder_at))
+        .sort((a, b) => {
+          if (a.is_completed !== b.is_completed) {
+            return a.is_completed ? 1 : -1;
+          }
+          const tA = new Date(a.reminder_at!).getTime();
+          const tB = new Date(b.reminder_at!).getTime();
+          return tA - tB;
+        });
+    } else if (activeFilter.type === 'tag' || activeFilter.type === 'mention' || searchQuery.trim()) {
+      // Tags, mentions, and search queries span across both personal notes and tagged notes
+      const allNotes = getNotes('all');
+      const taggedNotes = getNotes('tagged_me');
+      const map = new Map<string, Note>();
+      allNotes.forEach((n) => map.set(n.id, n));
+      taggedNotes.forEach((n) => map.set(n.id, n));
+      result = Array.from(map.values());
+    } else {
+      // "My Thoughts": Pure thoughts only (hide notes that have a deadline)
+      result = notes.filter((n) => !n.reminder_at);
+    }
 
     if (activeFilter.type === 'untagged') {
-      result = result.filter((n) => !n.tags || n.tags.length === 0);
+      result = result.filter((n) => !n.reminder_at && (!n.tags || n.tags.length === 0));
     } else if (activeFilter.type === 'tag' && activeFilter.value) {
       const valLower = activeFilter.value.toLowerCase();
       result = result.filter((n) =>
@@ -308,6 +388,7 @@ export function App() {
 
   const activeFilterTitle = useMemo(() => {
     if (searchQuery.trim()) return `Search: "${searchQuery}" (${searchOperator})`;
+    if (activeFilter.type === 'reminders') return 'Deadlines & Tasks';
     if (activeFilter.type === 'tagged_me') return 'Thoughts where you were tagged';
     if (activeFilter.type === 'untagged') return 'Untagged thoughts';
     if (activeFilter.type === 'tag') return `#${activeFilter.value}`;
@@ -363,6 +444,7 @@ export function App() {
           mentionsCount={mentionsCount}
           allNotesCount={myNotesCount}
           untaggedCount={untaggedCount}
+          remindersCount={remindersCount}
           isOpenMobile={isMobileSidebarOpen}
           onCloseMobile={() => setIsMobileSidebarOpen(false)}
         />
@@ -370,31 +452,44 @@ export function App() {
         {/* Center Main Feed (600px max) */}
         <main className="flex-1 min-w-0 px-3.5 sm:px-6 py-4 sm:py-6 max-w-2xl mx-auto">
           {/* Mobile Quick Feed Switcher Tabs (Visible only on mobile/tablet < lg) */}
-          <div className="lg:hidden mb-4 grid grid-cols-3 gap-1.5 p-1 bg-surface rounded-2xl hairline-border shadow-subtle select-none">
+          <div className="lg:hidden mb-4 grid grid-cols-4 gap-1 p-1 bg-surface rounded-2xl hairline-border shadow-subtle select-none">
             <button
               type="button"
               onClick={() => handleSelectFilter('all')}
-              className={`flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer ${
+              className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer ${
                 activeFilter.type === 'all' && !searchQuery
                   ? 'bg-primary text-white font-semibold shadow-subtle'
                   : 'text-ink-muted hover:text-ink active:bg-hairline/50'
               }`}
             >
               <Inbox className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">My ({myNotesCount})</span>
+              <span className="truncate">My</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSelectFilter('reminders')}
+              className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer ${
+                activeFilter.type === 'reminders'
+                  ? 'bg-rose-600 text-white font-semibold shadow-subtle'
+                  : 'text-ink-muted hover:text-ink active:bg-hairline/50'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5 shrink-0 text-rose-500" />
+              <span className="truncate">Due ({remindersCount})</span>
             </button>
 
             <button
               type="button"
               onClick={() => handleSelectFilter('tagged_me')}
-              className={`flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer relative ${
+              className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer relative ${
                 activeFilter.type === 'tagged_me'
                   ? 'bg-primary text-white font-semibold shadow-subtle'
                   : 'text-ink-muted hover:text-ink active:bg-hairline/50'
               }`}
             >
               <Bell className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Tagged</span>
+              <span className="truncate">Tagged Me</span>
               {mentionsCount > 0 && (
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold leading-none shrink-0 ${
@@ -413,18 +508,18 @@ export function App() {
             <button
               type="button"
               onClick={() => handleSelectFilter('untagged')}
-              className={`flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer ${
+              className={`flex items-center justify-center gap-1 py-2 px-1 rounded-xl text-xs font-medium transition-all min-h-[38px] cursor-pointer ${
                 activeFilter.type === 'untagged'
                   ? 'bg-primary text-white font-semibold shadow-subtle'
                   : 'text-ink-muted hover:text-ink active:bg-hairline/50'
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Untagged ({untaggedCount})</span>
+              <span className="truncate">Untagged</span>
             </button>
           </div>
 
-          {activeFilter.type !== 'tagged_me' && (
+          {activeFilter.type === 'all' && (
             <InputBox
               onSaveNote={handleSaveNote}
               allTags={tags}
@@ -436,10 +531,12 @@ export function App() {
           <FeedList
             notes={filteredNotes}
             currentUserId={currentUser?.id}
+            currentUsername={currentUser?.username}
             selectedNoteId={selectedNote?.id}
             isLoading={isFeedLoading}
             onSelectNote={setSelectedNote}
             onDeleteNote={handleDeleteNote}
+            onToggleComplete={handleToggleCompleteNote}
             onTagClick={handleTagClickFromCard}
             onMentionClick={handleMentionClickFromCard}
             activeFilterTitle={activeFilterTitle}
@@ -452,16 +549,23 @@ export function App() {
         </main>
 
         {/* Right Inspector Detail Panel (280px) */}
-        <DetailPanel
-          note={selectedNote}
-          currentUserId={currentUser?.id}
-          onClose={() => setSelectedNote(null)}
-          onDeleteNote={handleDeleteNote}
-          onUpdateNote={handleUpdateNote}
-          teammates={teammates}
-          allTags={tags}
-          onAddToast={addToast}
-        />
+        <ErrorBoundary
+          fallbackTitle="Could not load Thought Inspector"
+          onReset={() => setSelectedNote(null)}
+        >
+          <DetailPanel
+            note={selectedNote}
+            currentUserId={currentUser?.id}
+            currentUsername={currentUser?.username}
+            onClose={() => setSelectedNote(null)}
+            onDeleteNote={handleDeleteNote}
+            onToggleComplete={handleToggleCompleteNote}
+            onUpdateNote={handleUpdateNote}
+            teammates={teammates}
+            allTags={tags}
+            onAddToast={addToast}
+          />
+        </ErrorBoundary>
       </div>
 
       {/* Onboarding & Edit Handle Modal */}

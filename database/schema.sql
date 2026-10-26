@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS public.notes (
 
 ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS user_id UUID;
 ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS reminder_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS is_completed BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS completed_by JSONB DEFAULT '[]'::jsonb;
 
 DO $$
 BEGIN
@@ -138,6 +141,7 @@ CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON public.note_tags (tag_id);
 CREATE INDEX IF NOT EXISTS idx_mentions_user ON public.mentions (user_id);
 CREATE INDEX IF NOT EXISTS idx_mentions_note ON public.mentions (note_id);
 CREATE INDEX IF NOT EXISTS idx_users_username ON public.users (LOWER(username));
+CREATE INDEX IF NOT EXISTS idx_notes_reminder ON public.notes (user_id, reminder_at) WHERE reminder_at IS NOT NULL AND deleted_at IS NULL;
 
 -- 8. Enable Row Level Security (RLS)
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
@@ -187,10 +191,22 @@ CREATE POLICY "Notes delete own" ON public.notes
   FOR DELETE TO authenticated, anon
   USING (auth.uid() IS NULL OR user_id = auth.uid());
 
-CREATE POLICY "Tags own only" ON public.tags
-  FOR ALL TO authenticated, anon
+CREATE POLICY "Tags view directory" ON public.tags
+  FOR SELECT TO authenticated, anon
+  USING (true);
+
+CREATE POLICY "Tags mutate own only" ON public.tags
+  FOR INSERT TO authenticated, anon
+  WITH CHECK (auth.uid() IS NULL OR user_id = auth.uid());
+
+CREATE POLICY "Tags update own only" ON public.tags
+  FOR UPDATE TO authenticated, anon
   USING (auth.uid() IS NULL OR user_id = auth.uid())
   WITH CHECK (auth.uid() IS NULL OR user_id = auth.uid());
+
+CREATE POLICY "Tags delete own only" ON public.tags
+  FOR DELETE TO authenticated, anon
+  USING (auth.uid() IS NULL OR user_id = auth.uid());
 
 CREATE POLICY "Note tags view accessible" ON public.note_tags
   FOR SELECT TO authenticated, anon

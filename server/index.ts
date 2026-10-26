@@ -129,7 +129,24 @@ app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ error: error.message });
   }
 
+  const meta = req.user?.user_metadata || {};
+  const identityData = req.user?.identities?.[0]?.identity_data || {};
+  const googleAvatarUrl =
+    meta.avatar_url ||
+    meta.picture ||
+    identityData.avatar_url ||
+    identityData.picture ||
+    null;
+
   if (userProfile) {
+    // If existing user has no avatar stored, but Google provided one, backfill it now!
+    if (!userProfile.avatar_url && googleAvatarUrl) {
+      userProfile.avatar_url = googleAvatarUrl;
+      await db
+        .from('users')
+        .update({ avatar_url: googleAvatarUrl })
+        .eq('id', req.userId);
+    }
     return res.json({ user: userProfile });
   }
 
@@ -137,7 +154,7 @@ app.get('/api/users/me', async (req: AuthRequest, res: Response) => {
   const email = req.userEmail || '';
   const fallbackUsername = email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '') || `user_${req.userId.slice(0, 6)}`;
   const fullName = req.user?.user_metadata?.full_name || req.user?.user_metadata?.name || fallbackUsername;
-  const avatarUrl = req.user?.user_metadata?.avatar_url || null;
+  const avatarUrl = googleAvatarUrl;
 
   const { data: createdUser, error: insertErr } = await db
     .from('users')
@@ -275,7 +292,7 @@ app.post('/api/upload', async (req: AuthRequest, res: Response) => {
 // ========================================================
 
 function mapNoteRow(n: any): any {
-  const tags = (n.note_tags || [])
+  let tags = (n.note_tags || [])
     .filter((nt: any) => nt.tags)
     .map((nt: any) => ({
       id: nt.tags.id,
@@ -283,6 +300,17 @@ function mapNoteRow(n: any): any {
       is_manual: nt.is_manual ?? true,
       source: nt.source || 'manual',
     }));
+
+  // Fallback: If tags junction is empty or blocked by RLS, extract hashtags directly from note content
+  if (tags.length === 0 && n.content) {
+    const parsed = parseNoteContent(n.content);
+    tags = parsed.tags.map((tagName: string) => ({
+      id: `tag-${tagName.toLowerCase()}`,
+      name: tagName.toLowerCase(),
+      is_manual: true,
+      source: 'manual',
+    }));
+  }
 
   const mentions = (n.mentions || [])
     .filter((m: any) => m.users)
@@ -298,18 +326,36 @@ function mapNoteRow(n: any): any {
 
   const author = n.users
     ? {
-        id: n.users.id,
-        username: n.users.username,
-        full_name: n.users.full_name,
-        avatar_url: n.users.avatar_url,
-      }
+      id: n.users.id,
+      username: n.users.username,
+      full_name: n.users.full_name,
+      avatar_url: n.users.avatar_url,
+    }
     : undefined;
+
+  let rawCompletedBy = n.completed_by;
+  let completed_by: string[] = [];
+  if (Array.isArray(rawCompletedBy)) {
+    completed_by = rawCompletedBy
+      .map((entry: any) => {
+        if (typeof entry === 'string') return entry.toLowerCase();
+        return (entry?.username || entry?.user_id || '').toLowerCase();
+      })
+      .filter(Boolean);
+  }
+  const fallbackHandle = author?.username || n.users?.username;
+  if (n.is_completed && completed_by.length === 0 && fallbackHandle) {
+    completed_by.push(fallbackHandle.toLowerCase());
+  }
 
   return {
     id: n.id,
     user_id: n.user_id,
     author,
     content: n.content,
+    reminder_at: n.reminder_at || null,
+    is_completed: Boolean(n.is_completed),
+    completed_by,
     created_at: n.created_at,
     updated_at: n.updated_at,
     tags,
@@ -389,61 +435,128 @@ app.get('/api/notes', async (req: AuthRequest, res: Response) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
   const offset = parseInt(req.query.offset as string) || 0;
 
-  let query = db
-    .from('notes')
-    .select(`
-      id,
-      user_id,
-      content,
-      created_at,
-      updated_at,
-      users!notes_user_id_fkey ( id, username, full_name, avatar_url ),
-      note_tags (
-        is_manual,
-        source,
-        tags ( id, name )
-      ),
-      mentions (
-        user_id,
-        users ( id, display_name:full_name, username, contact_email:email, avatar_url )
-      )
-    `, { count: 'exact' })
-    .is('deleted_at', null);
+  let noteIds: string[] = [];
 
   if (feed === 'tagged_me') {
+    // 1. Fetch note IDs from mentions table where this user is tagged
     const { data: mentionRows } = await db
       .from('mentions')
       .select('note_id')
       .eq('user_id', userId);
 
-    const noteIds = (mentionRows || []).map((m: any) => m.note_id);
+    noteIds = (mentionRows || []).map((m: any) => m.note_id);
+
+    // 2. Also check if user has a username, find notes mentioning @username in content
+    const { data: userProfile } = await db
+      .from('users')
+      .select('username')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (userProfile?.username) {
+      const { data: contentMatches } = await db
+        .from('notes')
+        .select('id')
+        .is('deleted_at', null)
+        .ilike('content', `%@${userProfile.username}%`);
+
+      if (contentMatches && contentMatches.length > 0) {
+        const matchedIds = contentMatches.map((n: any) => n.id);
+        noteIds = Array.from(new Set([...noteIds, ...matchedIds]));
+      }
+    }
+
     if (noteIds.length === 0) {
       return res.json({ notes: [], pagination: { total: 0, limit, offset, has_more: false }, total: 0 });
     }
-
-    query = query.in('id', noteIds).neq('user_id', userId);
-  } else {
-    query = query.eq('user_id', userId);
   }
 
-  if (searchQuery) {
-    const cleanSearch = searchQuery
-      .replace(/[!&|():*]/g, ' ')
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .join(' & ');
+  // Resilient query runner: attempts with reminder columns first; if not migrated in DB, falls back seamlessly
+  const runNotesQuery = async (includeReminderCols: boolean) => {
+    const cols = includeReminderCols
+      ? `
+        id,
+        user_id,
+        content,
+        reminder_at,
+        is_completed,
+        completed_by,
+        created_at,
+        updated_at,
+        users!notes_user_id_fkey ( id, username, full_name, avatar_url ),
+        note_tags (
+          is_manual,
+          source,
+          tags ( id, name )
+        ),
+        mentions (
+          user_id,
+          users ( id, display_name:full_name, username, contact_email:email, avatar_url )
+        )
+      `
+      : `
+        id,
+        user_id,
+        content,
+        created_at,
+        updated_at,
+        users!notes_user_id_fkey ( id, username, full_name, avatar_url ),
+        note_tags (
+          is_manual,
+          source,
+          tags ( id, name )
+        ),
+        mentions (
+          user_id,
+          users ( id, display_name:full_name, username, contact_email:email, avatar_url )
+        )
+      `;
 
-    if (cleanSearch) {
-      query = query.textSearch('fts', cleanSearch, { config: 'english' });
+    let q = db
+      .from('notes')
+      .select(cols, { count: 'exact' })
+      .is('deleted_at', null);
+
+    if (feed === 'tagged_me') {
+      q = q.in('id', noteIds);
+    } else if (feed === 'reminders') {
+      if (!includeReminderCols) {
+        return { data: [], count: 0, error: null };
+      }
+      q = q.eq('user_id', userId).not('reminder_at', 'is', null);
+    } else {
+      q = q.eq('user_id', userId);
     }
+
+    if (searchQuery) {
+      const cleanSearch = searchQuery
+        .replace(/[!&|():*]/g, ' ')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .join(' & ');
+
+      if (cleanSearch) {
+        q = q.textSearch('fts', cleanSearch, { config: 'english' });
+      }
+    }
+
+    q = q
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    return await q;
+  };
+
+  let { data, count, error } = await runNotesQuery(true);
+
+  if (error && (error.message?.includes('is_completed') || error.message?.includes('reminder_at') || error.message?.includes('completed_by') || error.code === '42703')) {
+    console.warn('[GET /api/notes] notes table missing reminder columns, falling back to base columns...');
+    const retry = await runNotesQuery(false);
+    data = retry.data;
+    count = retry.count;
+    error = retry.error;
   }
-
-  query = query
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  const { data, count, error } = await query;
 
   if (error) {
     console.error('Supabase notes fetch error:', error);
@@ -510,12 +623,11 @@ app.get('/api/notes/mentions-count', async (req: AuthRequest, res: Response) => 
       });
     }
 
-    // 3. Fetch notes created by colleagues that are not deleted (exclude self-mentions)
+    // 3. Fetch notes mentioning this user that are not deleted
     const { data: notes, error: notesErr } = await db
       .from('notes')
       .select('id, created_at')
       .in('id', noteIds)
-      .neq('user_id', req.userId)
       .is('deleted_at', null);
 
     if (notesErr) {
@@ -572,7 +684,7 @@ app.post('/api/notes', async (req: AuthRequest, res: Response) => {
   const db = getDb(req);
   if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
-  const { content, manualTags } = req.body || {};
+  const { content, manualTags, reminderAt, isCompleted } = req.body || {};
   const parsed = parseNoteContent(content || '');
   if (!parsed.isValid) {
     return res.status(400).json({ error: parsed.errors[0] || 'Invalid note content.', success: false });
@@ -587,25 +699,39 @@ app.post('/api/notes', async (req: AuthRequest, res: Response) => {
   let matchedTeammates: any[] = [];
 
   if (parsed.mentions.length > 0) {
-    const { data: usersData } = await db
+    const mentionSet = new Set(parsed.mentions.map((m) => m.toLowerCase()));
+    const { data: allUsers } = await db
       .from('users')
-      .select('id, username, full_name, email, avatar_url')
-      .in('username', parsed.mentions.map((m) => m.toLowerCase()));
+      .select('id, username, full_name, email, avatar_url');
 
-    matchedTeammates = usersData || [];
-    mentionedUserIds = matchedTeammates.map((u) => u.id);
+    matchedTeammates = (allUsers || []).filter(
+      (u: any) => u.username && mentionSet.has(u.username.toLowerCase())
+    );
+    mentionedUserIds = matchedTeammates.map((u: any) => u.id);
   }
 
   const noteId = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  const { error: noteErr } = await db.from('notes').insert({
+  const insertData: any = {
     id: noteId,
     user_id: req.userId,
     content,
+    reminder_at: reminderAt || null,
+    is_completed: Boolean(isCompleted),
     created_at: now,
     updated_at: now,
-  });
+  };
+
+  let { error: noteErr } = await db.from('notes').insert(insertData);
+
+  // Graceful fallback if reminder columns are not yet migrated in DB
+  if (noteErr && (noteErr.message?.includes('reminder_at') || noteErr.message?.includes('is_completed'))) {
+    delete insertData.reminder_at;
+    delete insertData.is_completed;
+    const retry = await db.from('notes').insert(insertData);
+    noteErr = retry.error;
+  }
 
   if (noteErr) {
     console.error('Note insert error:', noteErr);
@@ -635,6 +761,9 @@ app.post('/api/notes', async (req: AuthRequest, res: Response) => {
     id: noteId,
     user_id: req.userId,
     content,
+    reminder_at: reminderAt || null,
+    is_completed: Boolean(isCompleted),
+    completed_by: [],
     created_at: now,
     updated_at: now,
     tags,
@@ -650,7 +779,7 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
   if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
   const { id } = req.params;
-  const { content, manualTags } = req.body || {};
+  const { content, manualTags, reminderAt, isCompleted } = req.body || {};
 
   const parsed = parseNoteContent(content || '');
   if (!parsed.isValid) {
@@ -667,13 +796,32 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
     .eq('user_id', req.userId)
     .maybeSingle();
 
-  const { data: updatedRow, error: updateErr } = await db
+  const updates: any = { content, updated_at: now };
+  if (reminderAt !== undefined) updates.reminder_at = reminderAt;
+  if (isCompleted !== undefined) updates.is_completed = Boolean(isCompleted);
+
+  let { data: updatedRow, error: updateErr } = await db
     .from('notes')
-    .update({ content, updated_at: now })
+    .update(updates)
     .eq('id', id)
     .eq('user_id', req.userId)
-    .select('id, content, created_at, updated_at')
+    .select('id, content, reminder_at, is_completed, completed_by, created_at, updated_at')
     .maybeSingle();
+
+  // Fallback if columns not yet migrated
+  if (updateErr && (updateErr.message?.includes('reminder_at') || updateErr.message?.includes('is_completed') || updateErr.message?.includes('completed_by'))) {
+    delete updates.reminder_at;
+    delete updates.is_completed;
+    const retry = await db
+      .from('notes')
+      .update(updates)
+      .eq('id', id)
+      .eq('user_id', req.userId)
+      .select('id, content, created_at, updated_at')
+      .maybeSingle();
+    updatedRow = retry.data;
+    updateErr = retry.error;
+  }
 
   if (updateErr) {
     return res.status(500).json({ error: `Could not update note: ${updateErr.message}`, success: false });
@@ -691,6 +839,7 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
       const u = m[1] || m[2];
       if (u && !oldUrls.includes(u)) oldUrls.push(u);
     }
+    imageRegex.lastIndex = 0;
     const newUrls: string[] = [];
     while ((m = imageRegex.exec(content)) !== null) {
       const u = m[1] || m[2];
@@ -713,13 +862,15 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
   let matchedTeammates: any[] = [];
 
   if (parsed.mentions.length > 0) {
-    const { data: usersData } = await db
+    const mentionSet = new Set(parsed.mentions.map((m) => m.toLowerCase()));
+    const { data: allUsers } = await db
       .from('users')
-      .select('id, username, full_name, email, avatar_url')
-      .in('username', parsed.mentions.map((m) => m.toLowerCase()));
+      .select('id, username, full_name, email, avatar_url');
 
-    matchedTeammates = usersData || [];
-    mentionedUserIds = matchedTeammates.map((u) => u.id);
+    matchedTeammates = (allUsers || []).filter(
+      (u: any) => u.username && mentionSet.has(u.username.toLowerCase())
+    );
+    mentionedUserIds = matchedTeammates.map((u: any) => u.id);
   }
 
   await db.from('note_tags').delete().eq('note_id', id);
@@ -748,6 +899,9 @@ app.put('/api/notes/:id', async (req: AuthRequest, res: Response) => {
     id: updatedRow.id,
     user_id: req.userId,
     content: updatedRow.content,
+    reminder_at: updatedRow.reminder_at || null,
+    is_completed: Boolean(updatedRow.is_completed),
+    completed_by: updatedRow.completed_by || existingNote?.completed_by || [],
     created_at: updatedRow.created_at,
     updated_at: updatedRow.updated_at,
     tags,
@@ -788,20 +942,172 @@ app.delete('/api/notes/:id', async (req: AuthRequest, res: Response) => {
     }
   }
 
-  const { error } = await db
+  try {
+    await db.from('note_tags').delete().eq('note_id', id);
+    await db.from('mentions').delete().eq('note_id', id);
+  } catch (juncErr: any) {
+    console.warn('[Delete Note] Junction cleanup notice:', juncErr.message);
+  }
+
+  // Attempt hard delete
+  let { error: delErr } = await db
     .from('notes')
     .delete()
     .eq('id', id)
     .eq('user_id', req.userId);
 
-  if (error) {
-    return res.status(500).json({ error: error.message, success: false });
+  // If hard delete fails (e.g. FK constraint or RLS restriction), fallback to soft-delete
+  if (delErr) {
+    console.warn('[Delete Note] Hard delete failed, falling back to soft delete:', delErr.message);
+    const { error: softErr } = await db
+      .from('notes')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('user_id', req.userId);
+
+    if (softErr) {
+      console.error('[Delete Note] Soft delete also failed:', softErr.message);
+      return res.status(500).json({ error: softErr.message, success: false });
+    }
   }
 
-  res.json({ success: true });
+  res.json({ success: true, deletedNoteId: id });
 });
 
-// Delete User's Private Tag entirely
+// Toggle Task Completion (Collaborative Multi-Assignee: author & tagged colleagues)
+app.patch('/api/notes/:id/toggle-complete', async (req: AuthRequest, res: Response) => {
+  const db = getDb(req);
+  if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
+
+  const { id } = req.params;
+  const { isCompleted, username } = req.body || {};
+
+  try {
+    // 1. Get current user's profile username
+    let currentUsername = '';
+    const { data: userProfile } = await db
+      .from('users')
+      .select('username')
+      .eq('id', req.userId)
+      .maybeSingle();
+
+    if (userProfile?.username) {
+      currentUsername = userProfile.username.toLowerCase();
+    }
+
+    // 2. Fetch the note with author & mentions to verify authorization
+    const client = supabase || db;
+    const { data: noteRow, error: fetchErr } = await client
+      .from('notes')
+      .select(`
+        id, user_id, is_completed, completed_by,
+        users!notes_user_id_fkey ( username ),
+        mentions ( user_id, users ( username ) )
+      `)
+      .eq('id', id)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (fetchErr || !noteRow) {
+      return res.status(404).json({ error: 'Note not found or deleted', success: false });
+    }
+
+    // 3. Security: Authorize if user is the author OR is mentioned in this note
+    const isAuthor = noteRow.user_id === req.userId;
+    const isMentioned = (noteRow.mentions || []).some((m: any) => m.user_id === req.userId);
+
+    if (!isAuthor && !isMentioned) {
+      return res.status(403).json({ error: 'Unauthorized: Only the author or assigned teammates can mark this deadline done', success: false });
+    }
+
+    // 4. Determine target user to toggle
+    const targetUser = (username || currentUsername).toLowerCase();
+    if (!targetUser) {
+      return res.status(400).json({ error: 'Could not resolve username for task completion', success: false });
+    }
+
+    // Security: non-author can only toggle completion for their own handle
+    if (!isAuthor && targetUser !== currentUsername) {
+      return res.status(403).json({ error: 'Unauthorized: You can only toggle completion for your own handle', success: false });
+    }
+
+    let currentCompletedBy: string[] = Array.isArray(noteRow.completed_by)
+      ? noteRow.completed_by.map((u: any) => typeof u === 'string' ? u.toLowerCase() : (u?.username || '').toLowerCase()).filter(Boolean)
+      : [];
+
+    if (noteRow.is_completed && currentCompletedBy.length === 0 && noteRow.users?.username) {
+      currentCompletedBy.push(noteRow.users.username.toLowerCase());
+    }
+
+    const shouldMarkDone = isCompleted !== undefined ? Boolean(isCompleted) : !currentCompletedBy.includes(targetUser);
+
+    let newCompletedBy = [...currentCompletedBy];
+    if (shouldMarkDone) {
+      if (!newCompletedBy.includes(targetUser)) {
+        newCompletedBy.push(targetUser);
+      }
+    } else {
+      newCompletedBy = newCompletedBy.filter((u) => u !== targetUser);
+    }
+
+    // Participants = author + all mentioned teammates
+    const allParticipants = Array.from(new Set([
+      (noteRow.users?.username || '').toLowerCase(),
+      ...((noteRow.mentions || []).map((m: any) => (m.users?.username || '').toLowerCase()))
+    ].filter(Boolean)));
+
+    const overallCompleted = allParticipants.length > 0
+      ? allParticipants.every((p) => newCompletedBy.includes(p))
+      : newCompletedBy.length > 0;
+
+    const now = new Date().toISOString();
+
+    // 5. Update note
+    let { data: updated, error: updateErr } = await client
+      .from('notes')
+      .update({
+        is_completed: overallCompleted,
+        completed_by: newCompletedBy,
+        updated_at: now,
+      })
+      .eq('id', id)
+      .select('id, is_completed, completed_by, updated_at')
+      .maybeSingle();
+
+    if (updateErr && (updateErr.message?.includes('completed_by') || updateErr.code === '42703')) {
+      const retry = await client
+        .from('notes')
+        .update({
+          is_completed: overallCompleted,
+          updated_at: now,
+        })
+        .eq('id', id)
+        .select('id, is_completed, updated_at')
+        .maybeSingle();
+      updated = { ...(retry.data || {}), completed_by: newCompletedBy };
+      updateErr = retry.error;
+    }
+
+    if (updateErr) {
+      return res.status(500).json({ error: updateErr.message, success: false });
+    }
+
+    res.json({
+      success: true,
+      note: updated || {
+        id,
+        is_completed: overallCompleted,
+        completed_by: newCompletedBy,
+        updated_at: now,
+      },
+    });
+  } catch (err: any) {
+    console.error('[toggle-complete error]:', err);
+    res.status(500).json({ error: err.message, success: false });
+  }
+});
+
+// Delete User's Private Tag entirely (Non-blocking & fast)
 app.delete('/api/tags/:id', async (req: AuthRequest, res: Response) => {
   const db = getDb(req);
   if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
@@ -837,87 +1143,167 @@ app.delete('/api/tags/:id', async (req: AuthRequest, res: Response) => {
     return res.status(500).json({ error: delErr.message, success: false });
   }
 
-  // Also remove the #tag string from user's notes so it doesn't re-extract
-  try {
-    const { data: userNotes } = await db
-      .from('notes')
-      .select('id, content')
-      .eq('user_id', req.userId)
-      .is('deleted_at', null);
-
-    const regex = new RegExp(`(?:^|\\s)#${tagRow.name}\\b`, 'gi');
-    for (const n of userNotes || []) {
-      if (regex.test(n.content)) {
-        const cleaned = n.content.replace(regex, '').trim();
-        if (cleaned.length > 0) {
-          await db.from('notes').update({ content: cleaned }).eq('id', n.id);
-        }
-      }
-    }
-  } catch (cleanErr: any) {
-    console.warn('[Tag Delete] Notice when cleaning note text:', cleanErr.message);
-  }
-
+  // Immediately respond to user so the UI is instantaneous (0ms - 20ms)
   res.json({ success: true, deletedTagId: tagRow.id, name: tagRow.name });
+
+  // Clean note text in the background asynchronously without blocking the user
+  (async () => {
+    try {
+      const { data: userNotes } = await db
+        .from('notes')
+        .select('id, content')
+        .eq('user_id', req.userId)
+        .is('deleted_at', null);
+
+      const regex = new RegExp(`(?:^|\\s)#${tagRow.name}\\b`, 'gi');
+      const updates = (userNotes || [])
+        .filter((n: any) => regex.test(n.content))
+        .map((n: any) => {
+          const cleaned = n.content.replace(regex, '').trim();
+          if (cleaned.length > 0) {
+            return db.from('notes').update({ content: cleaned }).eq('id', n.id);
+          }
+          return null;
+        })
+        .filter(Boolean);
+
+      if (updates.length > 0) {
+        await Promise.all(updates);
+      }
+    } catch (cleanErr: any) {
+      console.warn('[Tag Delete] Notice when cleaning note text:', cleanErr.message);
+    }
+  })();
 });
 
-// Get User's Private Tags with Note Counts
+// Get All Tags Available to User (Personal Tags + Tags from Notes where User is Tagged)
 app.get('/api/tags', async (req: AuthRequest, res: Response) => {
   const db = getDb(req);
   if (!db || !req.userId) return res.status(500).json({ error: 'Supabase not configured' });
 
-  const { data: userTags, error } = await db
-    .from('tags')
-    .select('id, name, created_at')
-    .eq('user_id', req.userId)
-    .order('name', { ascending: true });
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  const countMap: Record<string, number> = {};
-
   try {
-    const { data: noteTags } = await db
-      .from('note_tags')
+    // 1. Fetch user's own registered tags from tags table
+    const { data: userTags } = await db
+      .from('tags')
+      .select('id, name, created_at')
+      .eq('user_id', req.userId)
+      .order('name', { ascending: true });
+
+    // 2. Fetch user's personal active notes
+    const { data: userNotes } = await db
+      .from('notes')
       .select(`
-        tag_id,
-        notes!inner ( user_id, deleted_at )
+        id, content,
+        note_tags (
+          tags ( id, name )
+        )
       `)
-      .eq('notes.user_id', req.userId)
-      .is('notes.deleted_at', null);
+      .eq('user_id', req.userId)
+      .is('deleted_at', null);
 
-    (noteTags || []).forEach((nt: any) => {
-      countMap[nt.tag_id] = (countMap[nt.tag_id] || 0) + 1;
-    });
-  } catch (cntErr: any) {
-    console.warn('[GET /api/tags] Could not count note_tags junction:', cntErr.message);
+    // 3. Fetch notes where user is mentioned
+    const { data: mentionRows } = await db
+      .from('mentions')
+      .select('note_id')
+      .eq('user_id', req.userId);
+
+    const mentionedNoteIds = (mentionRows || []).map((m: any) => m.note_id);
+    let mentionedNotes: any[] = [];
+    if (mentionedNoteIds.length > 0) {
+      const { data: mNotes } = await db
+        .from('notes')
+        .select(`
+          id, content,
+          note_tags (
+            tags ( id, name )
+          )
+        `)
+        .in('id', mentionedNoteIds)
+        .is('deleted_at', null);
+      mentionedNotes = mNotes || [];
+    }
+
+    // Tag map: lowerName -> { id, name, count, created_at }
+    const tagMap = new Map<string, { id: string; name: string; count: number; created_at?: string }>();
+
+    // Seed with user's own registered tags
+    for (const ut of userTags || []) {
+      tagMap.set(ut.name.toLowerCase(), {
+        id: ut.id,
+        name: ut.name,
+        count: 0,
+        created_at: ut.created_at,
+      });
+    }
+
+    // Process all notes (both personal notes and notes mentioning user)
+    const allAccessibleNotes = [...(userNotes || []), ...mentionedNotes];
+    for (const note of allAccessibleNotes) {
+      const seenInThisNote = new Set<string>();
+
+      // Check note_tags junction
+      for (const nt of note.note_tags || []) {
+        if (nt.tags?.name) {
+          const norm = nt.tags.name.toLowerCase();
+          if (!seenInThisNote.has(norm)) {
+            seenInThisNote.add(norm);
+            const existing = tagMap.get(norm);
+            if (existing) {
+              existing.count += 1;
+            } else {
+              tagMap.set(norm, {
+                id: nt.tags.id || `tag-${norm}`,
+                name: nt.tags.name,
+                count: 1,
+              });
+            }
+          }
+        }
+      }
+
+      // Also parse hashtags in note content
+      if (note.content) {
+        const parsed = parseNoteContent(note.content);
+        for (const pt of parsed.tags) {
+          const norm = pt.toLowerCase();
+          if (!seenInThisNote.has(norm)) {
+            seenInThisNote.add(norm);
+            const existing = tagMap.get(norm);
+            if (existing) {
+              existing.count += 1;
+            } else {
+              tagMap.set(norm, {
+                id: `tag-${norm}`,
+                name: pt,
+                count: 1,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    const tags = Array.from(tagMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ tags });
+  } catch (err: any) {
+    console.error('[GET /api/tags] Error fetching tags:', err);
+    res.status(500).json({ error: err.message, tags: [] });
   }
-
-  const tags = (userTags || []).map((t) => ({
-    id: t.id,
-    name: t.name,
-    count: countMap[t.id] || 0,
-    created_at: t.created_at,
-  }));
-
-  res.json({ tags });
 });
 
 // ========================================================
 // AUTOMATED GOOGLE DRIVE PER-USER SPREADSHEET BACKUP
 // ========================================================
-// Hardcoded Google Apps Script Webhook URL (shared across all users)
-// You can set your deployed Web App URL directly here or in .env.local
-const HARDCODED_GOOGLE_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwKfFJ2a7pbg0ptKWusTUjELFLISxvK3zVcGeMWU6eVxY4fjYJ-ml7j463caTTTbKy1Dw/exec';
-const googleWebhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL || HARDCODED_GOOGLE_WEBHOOK_URL || '';
+// Google Apps Script Webhook URL is loaded securely from environment variables
+const googleWebhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL || '';
 
 async function syncAllUsersToGoogleDrive(customUrl?: string): Promise<{ success: boolean; totalUsers: number; message: string; data?: any }> {
-  const targetUrl = customUrl || googleWebhookUrl || HARDCODED_GOOGLE_WEBHOOK_URL;
+  const targetUrl = customUrl || googleWebhookUrl;
   if (!targetUrl) {
-    return { 
-      success: false, 
-      totalUsers: 0, 
-      message: 'Google Sheets Webhook URL is not configured. Please set GOOGLE_SHEETS_WEBHOOK_URL in .env.local or server/index.ts.' 
+    return {
+      success: false,
+      totalUsers: 0,
+      message: 'Google Sheets Webhook URL is not configured. Please set GOOGLE_SHEETS_WEBHOOK_URL in environment variables.'
     };
   }
 

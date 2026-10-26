@@ -51,7 +51,7 @@ export function parseNoteContent(content: string): ParsedNote {
 
   // 1. Extract Tags (#TagName)
   // Requires 1 or more leading hashes (e.g. #tag or ##double) followed by 2-30 chars
-  const tagRegex = /(?:^|[\s,.:;!?"'(\[\{])#+([a-zA-Z0-9_\-]{2,30})/g;
+  const tagRegex = /(?:^|[\s,.:;!?"'(\[\{])#+([a-zA-Z0-9_-]{2,30})/g;
   const rawTags: string[] = [];
 
   while ((match = tagRegex.exec(content)) !== null) {
@@ -71,7 +71,7 @@ export function parseNoteContent(content: string): ParsedNote {
 
   // 2. Extract Mentions (@Username)
   // Requires 1 or more leading @ signs followed by 2-30 chars
-  const mentionRegex = /(?:^|[\s,.:;!?"'(\[\{])@+([a-zA-Z0-9._\-]{2,30})/g;
+  const mentionRegex = /(?:^|[\s,.:;!?"'(\[\{])@+([a-zA-Z0-9._-]{2,30})/g;
   const rawMentions: string[] = [];
 
   while ((match = mentionRegex.exec(content)) !== null) {
@@ -82,7 +82,7 @@ export function parseNoteContent(content: string): ParsedNote {
 
     let mentionStr = match[1];
     // Strip trailing periods or punctuation
-    mentionStr = mentionStr.replace(/[._\-]+$/, '');
+    mentionStr = mentionStr.replace(/[._-]+$/, '');
 
     if (mentionStr.length >= 2 && mentionStr.length <= 30) {
       rawMentions.push(mentionStr.toLowerCase());

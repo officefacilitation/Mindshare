@@ -51,6 +51,10 @@ export function exportNotesToExcel(notes: Note[], options: ExcelExportOptions = 
     const tagsStr = (note.tags || []).map((t) => `#${t.name}`).join(', ');
     const mentionsStr = (note.mentions || []).map((m) => `@${m.username}`).join(', ');
 
+    const reminderStr = note.reminder_at ? new Date(note.reminder_at).toLocaleString() : 'None';
+    const completionStr = note.is_completed ? 'Completed' : (note.reminder_at ? 'Pending' : 'N/A');
+    const completedByStr = (note.completed_by || []).map((u) => `@${u}`).join(', ');
+
     return {
       '#': index + 1,
       'Thought ID': note.id,
@@ -59,6 +63,9 @@ export function exportNotesToExcel(notes: Note[], options: ExcelExportOptions = 
       'Thought Content': cleanContent,
       'Tags': tagsStr,
       'Mentions': mentionsStr,
+      'Deadline': reminderStr,
+      'Status': completionStr,
+      'Completed By': completedByStr,
       'Attached Media URLs': mediaUrls.join('\n'),
       'Author': note.author?.username ? `@${note.author.username}` : (options.userHandle ? `@${options.userHandle}` : 'You'),
       'Author Name': note.author?.full_name || '',
@@ -76,6 +83,9 @@ export function exportNotesToExcel(notes: Note[], options: ExcelExportOptions = 
     { wch: 55 },  // Thought Content
     { wch: 25 },  // Tags
     { wch: 25 },  // Mentions
+    { wch: 22 },  // Deadline
+    { wch: 14 },  // Status
+    { wch: 25 },  // Completed By
     { wch: 45 },  // Attached Media URLs
     { wch: 16 },  // Author
     { wch: 20 },  // Author Name

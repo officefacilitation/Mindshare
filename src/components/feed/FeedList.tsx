@@ -6,10 +6,12 @@ import { Inbox, Sparkles, Filter, X } from 'lucide-react';
 interface FeedListProps {
   notes: Note[];
   currentUserId?: string;
+  currentUsername?: string;
   selectedNoteId?: string;
   isLoading?: boolean;
   onSelectNote: (note: Note) => void;
   onDeleteNote: (id: string) => void;
+  onToggleComplete?: (id: string, isCompleted: boolean, username?: string) => void;
   onTagClick: (tagName: string) => void;
   onMentionClick: (username: string) => void;
   activeFilterTitle?: string;
@@ -21,10 +23,12 @@ const PAGE_SIZE = 25;
 export const FeedList: React.FC<FeedListProps> = ({
   notes,
   currentUserId,
+  currentUsername,
   selectedNoteId,
   isLoading = false,
   onSelectNote,
   onDeleteNote,
+  onToggleComplete,
   onTagClick,
   onMentionClick,
   activeFilterTitle,
@@ -95,9 +99,11 @@ export const FeedList: React.FC<FeedListProps> = ({
               key={note.id}
               note={note}
               currentUserId={currentUserId}
+              currentUsername={currentUsername}
               isSelected={note.id === selectedNoteId}
               onSelect={onSelectNote}
               onDelete={onDeleteNote}
+              onToggleComplete={onToggleComplete}
               onTagClick={onTagClick}
               onMentionClick={onMentionClick}
             />

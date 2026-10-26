@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Brain, Menu, LogOut, HelpCircle, Edit3, X, ShieldCheck, Volume2, VolumeX, FileSpreadsheet, CloudUpload } from 'lucide-react';
+import { Brain, Menu, LogOut, HelpCircle, Edit3, X, ShieldCheck, Volume2, VolumeX, FileSpreadsheet, CloudUpload, Bell } from 'lucide-react';
 import { User } from '../../lib/types';
 import { isSoundEnabled, toggleSoundEnabled } from '../../lib/sound';
+import { getNotificationPermission, requestNotificationPermission, showNotification } from '../../lib/notifications';
 
 interface HeaderProps {
   currentUser: User | null;
@@ -30,6 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
+  const [notifPermission, setNotifPermission] = useState(() => getNotificationPermission());
   const profileContainerRef = useRef<HTMLDivElement>(null);
 
   // Close profile dropdown when clicking outside or pressing Escape
@@ -112,7 +114,23 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Current User Badge (Clickable for full profile & ID card) */}
           {currentUser && (
-            <div className="relative" ref={profileContainerRef}>
+            <div className="relative flex items-center gap-1.5" ref={profileContainerRef}>
+              {/* Native Phone & Desktop Alerts Enable Button (Shown when not yet granted) */}
+              {notifPermission === 'default' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const granted = await requestNotificationPermission();
+                    setNotifPermission(granted ? 'granted' : 'denied');
+                  }}
+                  className="flex items-center gap-1.5 px-2 sm:px-2.5 min-h-[36px] rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-700 dark:text-rose-300 hairline-border border-rose-500/30 text-xs font-semibold transition-all cursor-pointer shadow-subtle animate-pulse"
+                  title="Click to enable phone and desktop reminders"
+                >
+                  <Bell className="w-3.5 h-3.5 text-rose-500" />
+                  <span className="hidden sm:inline">Enable Alerts</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
@@ -123,6 +141,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <img
                     src={currentUser.avatar_url}
                     alt={currentUser.username || 'User'}
+                    referrerPolicy="no-referrer"
                     className="w-5 h-5 rounded-full object-cover shrink-0"
                   />
                 ) : (
@@ -150,6 +169,7 @@ export const Header: React.FC<HeaderProps> = ({
                           <img
                             src={currentUser.avatar_url}
                             alt="avatar"
+                            referrerPolicy="no-referrer"
                             className="w-10 h-10 rounded-full object-cover shrink-0"
                           />
                         ) : (
@@ -210,6 +230,39 @@ export const Header: React.FC<HeaderProps> = ({
                       >
                         <span>{soundOn ? 'ON ♫' : 'Muted'}</span>
                       </button>
+                    </div>
+
+                    {/* Native Web Push & Notification Alert Status */}
+                    <div className="py-2.5 hairline-b flex items-center justify-between text-xs">
+                      <span className="text-[11px] font-semibold text-ink-muted flex items-center gap-1.5">
+                        <Bell className="w-3.5 h-3.5 text-rose-500" />
+                        <span>Deadline Alerts</span>
+                      </span>
+                      {notifPermission === 'granted' ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            showNotification('🔔 Mindshare Notification Test', {
+                              body: 'Your phone and desktop deadline alerts are active and working!',
+                            });
+                          }}
+                          className="px-2 py-0.5 rounded-lg font-semibold text-[10px] bg-status-success/15 text-status-success hover:bg-status-success/25 transition-colors cursor-pointer"
+                          title="Click to test native alert"
+                        >
+                          Active (Test)
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const granted = await requestNotificationPermission();
+                            setNotifPermission(granted ? 'granted' : 'denied');
+                          }}
+                          className="px-2.5 py-1 rounded-lg font-semibold text-[11px] bg-rose-600 text-white hover:bg-rose-700 transition-colors cursor-pointer shadow-subtle"
+                        >
+                          Enable
+                        </button>
+                      )}
                     </div>
 
                     {/* Actions */}

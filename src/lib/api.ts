@@ -220,11 +220,16 @@ export const api = {
     }
   },
 
-  async createNote(content: string, manualTags?: string[]): Promise<{ note?: Note; error?: string }> {
+  async createNote(
+    content: string,
+    manualTags?: string[],
+    reminderAt?: string | null,
+    isCompleted?: boolean
+  ): Promise<{ note?: Note; error?: string }> {
     try {
       const { ok, data } = await request('/notes', {
         method: 'POST',
-        body: JSON.stringify({ content, manualTags }),
+        body: JSON.stringify({ content, manualTags, reminderAt, isCompleted }),
       });
       if (!ok) return { error: data?.error || 'Failed to create note' };
       return { note: data.note };
@@ -233,16 +238,34 @@ export const api = {
     }
   },
 
-  async updateNote(id: string, content: string, manualTags?: string[]): Promise<{ note?: Note; error?: string }> {
+  async updateNote(
+    id: string,
+    content: string,
+    manualTags?: string[],
+    reminderAt?: string | null,
+    isCompleted?: boolean
+  ): Promise<{ note?: Note; error?: string }> {
     try {
       const { ok, data } = await request(`/notes/${id}`, {
         method: 'PUT',
-        body: JSON.stringify({ content, manualTags }),
+        body: JSON.stringify({ content, manualTags, reminderAt, isCompleted }),
       });
       if (!ok) return { error: data?.error || 'Failed to update note' };
       return { note: data.note };
     } catch (e) {
       return { error: 'Network error connecting to backend API' };
+    }
+  },
+
+  async toggleComplete(id: string, isCompleted: boolean, username?: string): Promise<{ success: boolean; note?: any }> {
+    try {
+      const { ok, data } = await request(`/notes/${id}/toggle-complete`, {
+        method: 'PATCH',
+        body: JSON.stringify({ isCompleted, username }),
+      });
+      return { success: Boolean(ok && data?.success), note: data?.note };
+    } catch {
+      return { success: false };
     }
   },
 

@@ -11,6 +11,7 @@ import {
   X,
   Edit3,
   Trash2,
+  Clock,
 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 
@@ -19,7 +20,7 @@ interface SidebarProps {
   teammates: User[];
   currentUser?: User | null;
   activeFilter: {
-    type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention';
+    type: 'all' | 'tagged_me' | 'untagged' | 'reminders' | 'tag' | 'mention';
     value?: string;
   };
   searchQuery: string;
@@ -27,12 +28,13 @@ interface SidebarProps {
   hasUnreadMentions?: boolean;
   onSearchChange: (q: string) => void;
   onOperatorChange: (op: 'AND' | 'OR') => void;
-  onSelectFilter: (type: 'all' | 'tagged_me' | 'untagged' | 'tag' | 'mention', value?: string) => void;
+  onSelectFilter: (type: 'all' | 'tagged_me' | 'untagged' | 'reminders' | 'tag' | 'mention', value?: string) => void;
   onOpenEditProfile?: () => void;
   onDeleteTag?: (tagId: string, tagName: string) => void;
   mentionsCount: number;
   allNotesCount: number;
   untaggedCount: number;
+  remindersCount?: number;
   isOpenMobile?: boolean;
   onCloseMobile?: () => void;
 }
@@ -53,6 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mentionsCount,
   allNotesCount,
   untaggedCount,
+  remindersCount = 0,
   isOpenMobile,
   onCloseMobile,
 }) => {
@@ -166,6 +169,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </button>
 
+            {/* Deadlines & Reminders Tab */}
+            <button
+              onClick={() => onSelectFilter('reminders')}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs font-medium transition-colors cursor-pointer min-h-[40px] ${
+                activeFilter.type === 'reminders'
+                  ? 'bg-surface text-rose-600 dark:text-rose-400 font-semibold shadow-subtle hairline-border border-rose-500/30'
+                  : 'text-ink-muted hover:text-ink hover:bg-surface/50'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Clock className="w-3.5 h-3.5 text-rose-500" /> Deadlines & Tasks
+              </span>
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                  remindersCount > 0
+                    ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
+                    : 'bg-canvas text-ink-muted'
+                }`}
+              >
+                {remindersCount}
+              </span>
+            </button>
+
             {/* Tagged Me Feed */}
             <button
               onClick={() => onSelectFilter('tagged_me')}
@@ -215,11 +241,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </nav>
         </div>
 
-        {/* Private Tags Section */}
+        {/* Tags Section */}
         <div>
           <div className="px-2 flex items-center justify-between mb-1.5">
             <h3 className="text-[10px] font-bold text-ink-subtle uppercase tracking-wider flex items-center gap-1">
-              <Hash className="w-3 h-3 text-primary" /> My Private Tags
+              <Hash className="w-3 h-3 text-primary" /> Tags
             </h3>
             <span className="text-[10px] text-ink-subtle">{tags.length}</span>
           </div>
@@ -348,6 +374,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <img
                           src={u.avatar_url}
                           alt={u.username || 'user'}
+                          referrerPolicy="no-referrer"
                           className="w-4 h-4 rounded-full object-cover shrink-0"
                         />
                       ) : (

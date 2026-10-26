@@ -1,6 +1,8 @@
 import { Note, Tag, User } from './types';
 import { api } from './api';
 import { playNotificationChime } from './sound';
+import { scheduleNoteReminder, syncAllNoteReminders } from './notifications';
+import { parseNoteContent } from './parser';
 
 type StorageListener = () => void;
 const listeners = new Set<StorageListener>();
@@ -73,15 +75,29 @@ export function getHasUnreadMentions(): boolean {
  * This is NEVER corrupted when viewing the Tagged Me tab.
  */
 export function getMyNotesCount(): number {
-  return feedCaches.all.length;
+  // Pure thoughts count (thoughts without active deadline)
+  return feedCaches.all.filter((n) => !n.reminder_at).length;
 }
 
 /**
- * Accurately returns the author's untagged thoughts count.
- * This is NEVER corrupted when viewing the Tagged Me tab.
+ * Accurately returns the author's untagged thoughts count (excluding deadlines).
  */
 export function getUntaggedCount(): number {
-  return feedCaches.all.filter((n) => !n.tags || n.tags.length === 0).length;
+  return feedCaches.all.filter((n) => !n.reminder_at && (!n.tags || n.tags.length === 0)).length;
+}
+
+export function getRemindersCount(): number {
+  // Actionable deadlines across personal and colleague mentions
+  const combined = [...feedCaches.all, ...feedCaches.tagged_me];
+  const seen = new Set<string>();
+  let count = 0;
+  for (const n of combined) {
+    if (!seen.has(n.id)) {
+      seen.add(n.id);
+      if (n.reminder_at && !n.is_completed) count++;
+    }
+  }
+  return count;
 }
 
 export function getCurrentFeed(): 'all' | 'tagged_me' | 'untagged' {
@@ -186,6 +202,9 @@ export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): P
     memoryHasUnreadMentions = mentionsData.hasUnread;
     isFeedLoading = false;
 
+    // Sync active reminder timers on phone/desktop across personal & shared tagged notes
+    syncAllNoteReminders([...feedCaches.all, ...feedCaches.tagged_me]);
+
     // Play notification sound when a new mention arrives!
     if (mentionsData.hasUnread && (!prevHasUnread || mentionsData.unreadCount > prevUnreadCount)) {
       playNotificationChime();
@@ -201,6 +220,8 @@ export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): P
         feedLoaded[otherKey] = true;
         if (otherKey === 'tagged_me') {
           memoryMentionsCount = res.notes.length;
+          // Sync team-wide mention reminders so colleague deadlines also notify user
+          syncAllNoteReminders([...feedCaches.all, ...feedCaches.tagged_me]);
         }
         notifyListeners();
       }).catch(() => {});
@@ -213,24 +234,91 @@ export async function syncFromServer(feed?: 'all' | 'tagged_me' | 'untagged'): P
 }
 
 /**
- * Create a new thought with author-defined manual tags
+ * Create a new thought with 0ms instant optimistic UI response
  */
-export async function createNote(content: string, manualTags?: string[]): Promise<{ note?: Note; error?: string }> {
-  const res = await api.createNote(content, manualTags);
-  if (res.error || !res.note) return res;
+export async function createNote(
+  content: string,
+  manualTags?: string[],
+  reminderAt?: string | null,
+  isCompleted?: boolean
+): Promise<{ note?: Note; error?: string }> {
+  // Generate optimistic note with temporary ID for instant 0ms response
+  const tempId = 'temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+  const now = new Date().toISOString();
 
-  // Optimistically prepend to personal thoughts cache
-  feedCaches.all = [res.note, ...feedCaches.all];
+  // Extract preliminary tags from text & manualTags
+  const quickTags = (manualTags || []).map((t) => ({ id: `t-${t}`, name: t, is_manual: true }));
+  const hashMatches = content.match(/(?:^|\s)#([a-zA-Z0-9_-]{2,30})/g) || [];
+  hashMatches.forEach((m) => {
+    const name = m.trim().replace(/^#/, '').toLowerCase();
+    if (!quickTags.some((qt) => qt.name.toLowerCase() === name)) {
+      quickTags.push({ id: `t-${name}`, name, is_manual: true });
+    }
+  });
+
+  // Extract preliminary mentions from text
+  const mentionMatches = content.match(/(?:^|\s)@([a-zA-Z0-9_]{2,30})/g) || [];
+  const quickMentions = mentionMatches.map((m) => {
+    const u = m.trim().replace(/^@/, '');
+    const foundUser = memoryTeammates.find((tm) => tm.username?.toLowerCase() === u.toLowerCase());
+    return {
+      id: foundUser?.id || `m-${u}`,
+      username: u,
+      display_name: foundUser?.full_name || u,
+      avatar_url: foundUser?.avatar_url,
+    };
+  });
+
+  const optimisticNote: Note = {
+    id: tempId,
+    user_id: feedCaches.all[0]?.user_id || '',
+    content,
+    tags: quickTags,
+    mentions: quickMentions,
+    reminder_at: reminderAt || null,
+    is_completed: Boolean(isCompleted),
+    created_at: now,
+    updated_at: now,
+  };
+
+  // Instant 0ms injection:
+  feedCaches.all = [optimisticNote, ...feedCaches.all];
   feedLoaded.all = true;
-
-  // Refresh tags and directory quietly in background
-  api.getTags().then((tags) => {
-    memoryTags = tags;
-    notifyListeners();
-  }).catch(() => {});
-
   notifyListeners();
-  return res;
+
+  try {
+    const res = await api.createNote(content, manualTags, reminderAt, isCompleted);
+    if (res.error || !res.note) {
+      // Rollback optimistic placeholder on failure
+      feedCaches.all = feedCaches.all.filter((n) => n.id !== tempId);
+      notifyListeners();
+      return res;
+    }
+
+    // Replace optimistic placeholder with confirmed server note
+    const idx = feedCaches.all.findIndex((n) => n.id === tempId);
+    if (idx !== -1) {
+      feedCaches.all[idx] = res.note;
+    } else {
+      feedCaches.all = [res.note, ...feedCaches.all.filter((n) => n.id !== tempId)];
+    }
+
+    if (res.note.reminder_at) {
+      scheduleNoteReminder(res.note);
+    }
+
+    api.getTags().then((tags) => {
+      memoryTags = tags;
+      notifyListeners();
+    }).catch(() => {});
+
+    notifyListeners();
+    return res;
+  } catch (err: any) {
+    feedCaches.all = feedCaches.all.filter((n) => n.id !== tempId);
+    notifyListeners();
+    return { error: err.message || 'Failed to create note' };
+  }
 }
 
 /**
@@ -253,15 +341,51 @@ export async function deleteNote(id: string): Promise<boolean> {
 }
 
 /**
- * Update note content and tags
+ * Update note content, tags, and reminder deadline (0ms optimistic latency)
  */
 export async function updateNote(
   id: string,
   newContent: string,
-  manualTags?: string[]
+  manualTags?: string[],
+  reminderAt?: string | null,
+  isCompleted?: boolean
 ): Promise<{ note?: Note; error?: string }> {
-  const res = await api.updateNote(id, newContent, manualTags);
-  if (res.error || !res.note) return res;
+  // 1. Instant optimistic update in RAM
+  const existing = feedCaches.all.find((n) => n.id === id) || feedCaches.tagged_me.find((n) => n.id === id);
+  if (existing) {
+    const parsed = parseNoteContent(newContent);
+    const combinedTagNames = Array.from(new Set([...(parsed.tags || []), ...(manualTags || [])]));
+    const optimisticTags: Tag[] = combinedTagNames.map((name) => {
+      const found = (existing.tags || []).find((t) => t.name.toLowerCase() === name.toLowerCase());
+      return found || { id: `opt-tag-${name}`, name, is_manual: true, count: 1 };
+    });
+
+    const optimisticNote: Note = {
+      ...existing,
+      content: newContent,
+      tags: optimisticTags,
+      reminder_at: reminderAt !== undefined ? reminderAt : existing.reminder_at,
+      is_completed: isCompleted !== undefined ? isCompleted : existing.is_completed,
+      updated_at: new Date().toISOString(),
+    };
+
+    const updateCache = (list: Note[]) => list.map((n) => (n.id === id ? optimisticNote : n));
+    feedCaches.all = updateCache(feedCaches.all);
+    feedCaches.tagged_me = updateCache(feedCaches.tagged_me);
+    notifyListeners();
+  }
+
+  // 2. Perform authoritative API request
+  const res = await api.updateNote(id, newContent, manualTags, reminderAt, isCompleted);
+  if (res.error || !res.note) {
+    if (existing) {
+      const rollback = (list: Note[]) => list.map((n) => (n.id === id ? existing : n));
+      feedCaches.all = rollback(feedCaches.all);
+      feedCaches.tagged_me = rollback(feedCaches.tagged_me);
+      notifyListeners();
+    }
+    return res;
+  }
 
   const idxAll = feedCaches.all.findIndex((n) => n.id === id);
   if (idxAll !== -1) {
@@ -273,6 +397,10 @@ export async function updateNote(
     feedCaches.tagged_me[idxTagged] = res.note;
   }
 
+  if (res.note.reminder_at) {
+    scheduleNoteReminder(res.note);
+  }
+
   api.getTags().then((tags) => {
     memoryTags = tags;
     notifyListeners();
@@ -280,6 +408,49 @@ export async function updateNote(
 
   notifyListeners();
   return res;
+}
+
+/**
+ * Fast 1-click collaborative task completion toggle (0ms latency)
+ */
+export async function toggleCompleteNote(
+  id: string,
+  isCompleted: boolean,
+  username?: string
+): Promise<boolean> {
+  // Optimistically update in RAM immediately
+  const updateList = (list: Note[]) =>
+    list.map((n) => {
+      if (n.id !== id) return n;
+      let completedBy = Array.isArray(n.completed_by) ? [...n.completed_by] : [];
+      if (username) {
+        const u = username.toLowerCase();
+        if (isCompleted) {
+          if (!completedBy.includes(u)) completedBy.push(u);
+        } else {
+          completedBy = completedBy.filter((x) => x !== u);
+        }
+      }
+      return {
+        ...n,
+        is_completed: isCompleted,
+        completed_by: completedBy,
+      };
+    });
+
+  feedCaches.all = updateList(feedCaches.all);
+  feedCaches.tagged_me = updateList(feedCaches.tagged_me);
+  notifyListeners();
+
+  const res = await api.toggleComplete(id, isCompleted, username);
+  if (res.note) {
+    const syncExact = (list: Note[]) =>
+      list.map((n) => (n.id === id ? { ...n, ...res.note } : n));
+    feedCaches.all = syncExact(feedCaches.all);
+    feedCaches.tagged_me = syncExact(feedCaches.tagged_me);
+    notifyListeners();
+  }
+  return res.success;
 }
 
 /**

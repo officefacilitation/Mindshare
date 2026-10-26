@@ -43,6 +43,9 @@ export interface Note {
   user_id: string;
   author?: NoteAuthor;
   content: string;
+  reminder_at?: string | null;
+  is_completed?: boolean;
+  completed_by?: string[];
   created_at: string;
   updated_at: string;
   tags: Tag[];

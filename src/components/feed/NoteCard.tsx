@@ -2,14 +2,16 @@ import React, { useState } from 'react';
 import { Note } from '../../lib/types';
 import { TagChip, MentionChip } from '../ui/Chip';
 import { Modal } from '../ui/Modal';
-import { Trash2, Edit3, Clock, ChevronRight, Image as ImageIcon, User as UserIcon } from 'lucide-react';
+import { Trash2, Edit3, Clock, Image as ImageIcon, Check } from 'lucide-react';
 
 interface NoteCardProps {
   note: Note;
   currentUserId?: string;
+  currentUsername?: string;
   onSelect: (note: Note) => void;
   isSelected?: boolean;
   onDelete: (id: string) => void;
+  onToggleComplete?: (id: string, isCompleted: boolean, username?: string) => void;
   onTagClick?: (tagName: string) => void;
   onMentionClick?: (username: string) => void;
 }
@@ -17,9 +19,11 @@ interface NoteCardProps {
 export const NoteCard: React.FC<NoteCardProps> = ({
   note,
   currentUserId,
+  currentUsername,
   onSelect,
   isSelected,
   onDelete,
+  onToggleComplete,
   onTagClick,
   onMentionClick,
 }) => {
@@ -27,6 +31,65 @@ export const NoteCard: React.FC<NoteCardProps> = ({
   const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
 
   const isOwner = !currentUserId || note.user_id === currentUserId;
+
+  // Multi-assignee collaborative task completion: author + all mentioned teammates
+  const participants = React.useMemo(() => {
+    if (!note.reminder_at) return [];
+    const list: { username: string; isAuthor: boolean; isCurrent: boolean }[] = [];
+    const authorHandle = (note.author?.username || (isOwner && currentUsername ? currentUsername : ''))?.toLowerCase().trim();
+    const curr = (currentUsername || '').toLowerCase().trim();
+
+    if (authorHandle) {
+      list.push({
+        username: authorHandle,
+        isAuthor: true,
+        isCurrent: authorHandle === curr,
+      });
+    }
+
+    (note.mentions || []).forEach((m) => {
+      const uname = (m.username || '').toLowerCase().trim();
+      if (uname && !list.some((p) => p.username === uname)) {
+        list.push({
+          username: uname,
+          isAuthor: false,
+          isCurrent: uname === curr,
+        });
+      }
+    });
+
+    return list;
+  }, [note.reminder_at, note.author, note.mentions, isOwner, currentUsername]);
+
+  const completedList = (note.completed_by || []).map((u) => u.toLowerCase());
+  const isCurrentDone = currentUsername ? completedList.includes(currentUsername.toLowerCase()) : Boolean(note.is_completed);
+
+  // Format reminder deadline
+  const getReminderStatus = (reminderStr?: string | null, isCompleted?: boolean) => {
+    if (!reminderStr) return null;
+    const time = new Date(reminderStr).getTime();
+    const now = Date.now();
+    const isPast = now > time;
+    const d = new Date(reminderStr);
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow = d.toDateString() === tomorrow.toDateString();
+
+    const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const label = isToday ? `Today, ${timeStr}` : isTomorrow ? `Tomorrow, ${timeStr}` : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${timeStr}`;
+
+    if (isCompleted) {
+      return { label: `Done (${label})`, isPast: false, isCompleted: true };
+    }
+    if (isPast) {
+      return { label: `Overdue: ${label}`, isPast: true, isCompleted: false };
+    }
+    return { label: `Due: ${label}`, isPast: false, isCompleted: false };
+  };
+
+  const reminderStatus = getReminderStatus(note.reminder_at, note.is_completed);
 
   // Extract embedded image URLs from markdown ![alt](url)
   const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
@@ -72,7 +135,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
     <>
       <article
         onClick={() => onSelect(note)}
-        className={`group bg-surface rounded-2xl hairline-border p-3.5 sm:p-4.5 mb-3.5 transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-surface/90 shadow-subtle ${
+        className={`group bg-surface rounded-2xl hairline-border p-3.5 sm:p-4.5 mb-3.5 transition-all duration-200 cursor-pointer hover:border-primary/40 hover:bg-surface/90 shadow-subtle max-w-full overflow-hidden break-words ${
           isSelected ? 'border-primary ring-1 ring-primary/20 bg-primary-light/10' : ''
         }`}
       >
@@ -84,6 +147,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                 <img
                   src={note.author.avatar_url}
                   alt={note.author.username || 'author'}
+                  referrerPolicy="no-referrer"
                   className="w-4 h-4 rounded-full object-cover"
                 />
               ) : (
@@ -101,23 +165,49 @@ export const NoteCard: React.FC<NoteCardProps> = ({
           </div>
         )}
 
-        {/* Main Text Content */}
-        {cleanedText && (
-          <div className="text-sm font-sans text-ink leading-relaxed whitespace-pre-wrap break-words">
-            {displayContent}
-            {shouldTruncate && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsExpanded(!isExpanded);
-                }}
-                className="ml-1 text-xs text-primary font-medium hover:underline inline-flex items-center gap-0.5 cursor-pointer"
+        {/* Main Text Content with optional task checkbox */}
+        <div className="flex items-start gap-2.5">
+          {note.reminder_at && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onToggleComplete) onToggleComplete(note.id, !isCurrentDone, currentUsername);
+              }}
+              className={`mt-0.5 w-5 h-5 rounded-lg flex items-center justify-center hairline-border transition-all cursor-pointer shrink-0 ${
+                isCurrentDone
+                  ? 'bg-status-success text-white border-status-success shadow-subtle'
+                  : 'bg-canvas hover:border-primary text-transparent'
+              }`}
+              title={isCurrentDone ? 'Mark pending' : `Mark done as @${currentUsername || 'me'}`}
+            >
+              <Check className="w-3.5 h-3.5 stroke-[3]" />
+            </button>
+          )}
+
+          <div className="flex-1 min-w-0">
+            {cleanedText && (
+              <div
+                className={`text-sm font-sans leading-relaxed whitespace-pre-wrap break-words transition-all ${
+                  isCurrentDone || note.is_completed ? 'line-through text-ink-muted' : 'text-ink'
+                }`}
               >
-                {isExpanded ? 'Show less' : 'Read more'}
-              </button>
+                {displayContent}
+                {shouldTruncate && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsExpanded(!isExpanded);
+                    }}
+                    className="ml-1 text-xs text-primary font-medium hover:underline inline-flex items-center gap-0.5 cursor-pointer no-underline"
+                  >
+                    {isExpanded ? 'Show less' : 'Read more'}
+                  </button>
+                )}
+              </div>
             )}
           </div>
-        )}
+        </div>
 
         {/* Embedded Image Previews */}
         {imageUrls.length > 0 && (
@@ -139,9 +229,9 @@ export const NoteCard: React.FC<NoteCardProps> = ({
         )}
 
         {/* Tags and Mentions Pill Row */}
-        {(note.tags.length > 0 || note.mentions.length > 0) && (
+        {((note.tags || []).length > 0 || (note.mentions || []).length > 0) && (
           <div className="mt-3.5 flex flex-wrap items-center gap-1.5 pt-2.5 hairline-t">
-            {note.tags.map((t) => (
+            {(note.tags || []).map((t) => (
               <TagChip
                 key={t.id}
                 tag={t}
@@ -150,7 +240,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                 }}
               />
             ))}
-            {note.mentions.map((m) => (
+            {(note.mentions || []).map((m) => (
               <MentionChip
                 key={m.id}
                 mention={m}
@@ -162,17 +252,117 @@ export const NoteCard: React.FC<NoteCardProps> = ({
           </div>
         )}
 
+        {/* Collaborative Multi-Assignee Task Completion Row */}
+        {note.reminder_at && participants.length > 0 && (
+          <div className="mt-3.5 pt-2.5 hairline-t space-y-1.5">
+            <div className="flex items-center justify-between text-[11px] text-ink-muted">
+              <span className="font-semibold text-ink-subtle uppercase tracking-wider text-[10px] flex items-center gap-1">
+                <Clock className="w-3 h-3 text-rose-500" /> Deadline Assignees
+              </span>
+              <span className="text-[10px] text-ink-subtle">
+                {completedList.length}/{participants.length} done
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {participants.map((p) => {
+                const isDone = completedList.includes(p.username);
+                if (isDone) {
+                  return (
+                    <div
+                      key={p.username}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border hairline-border border-emerald-500/30"
+                    >
+                      <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[3]" />
+                      <span>Done by @{p.username}</span>
+                      {p.isCurrent && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onToggleComplete) onToggleComplete(note.id, false, p.username);
+                          }}
+                          className="text-[10px] text-emerald-700/80 hover:text-emerald-950 dark:text-emerald-300/80 dark:hover:text-white underline cursor-pointer ml-1"
+                          title="Undo completion"
+                        >
+                          undo
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (p.isCurrent) {
+                  return (
+                    <button
+                      key={p.username}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (onToggleComplete) onToggleComplete(note.id, true, p.username);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface hover:bg-emerald-600 hover:text-white text-ink border hairline-border border-emerald-500/40 hover:border-emerald-600 shadow-subtle transition-all cursor-pointer active:scale-95 min-h-[34px]"
+                      title={`Mark done as @${p.username}`}
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Mark done as @{p.username}</span>
+                    </button>
+                  );
+                }
+
+                return (
+                  <span
+                    key={p.username}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-canvas text-ink-muted border hairline-border border-hairline/60"
+                  >
+                    <Clock className="w-3 h-3 text-ink-subtle" />
+                    <span>@{p.username} (Pending)</span>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Footer Meta & Quick Actions */}
-        <div className="mt-3 flex items-center justify-between text-xs text-ink-muted pt-2 hairline-t">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink-muted pt-2 hairline-t overflow-hidden">
+          <div className="flex flex-wrap items-center gap-2 min-w-0 max-w-full">
+            <div className="flex items-center gap-1 shrink-0">
               <Clock className="w-3 h-3 text-ink-subtle" />
               <span className="text-ink-subtle">{getRelativeTime(note.created_at)}</span>
             </div>
             {imageUrls.length > 0 && (
-              <span className="flex items-center gap-1 text-ink-subtle text-[11px]">
+              <span className="flex items-center gap-1 text-ink-subtle text-[11px] shrink-0">
                 <ImageIcon className="w-3 h-3 text-primary" /> {imageUrls.length}
               </span>
+            )}
+            {reminderStatus && (
+              <span
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold tracking-wide max-w-[200px] sm:max-w-[260px] truncate shrink-0 ${
+                  reminderStatus.isCompleted
+                    ? 'bg-status-success/10 text-status-success hairline-border border-status-success/20'
+                    : reminderStatus.isPast
+                    ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 hairline-border border-rose-500/40 animate-pulse'
+                    : 'bg-rose-500/10 text-rose-700 dark:text-rose-300 hairline-border border-rose-500/30'
+                }`}
+                title={reminderStatus.label}
+              >
+                <Clock className="w-3 h-3 shrink-0 text-rose-500" />
+                <span className="truncate">{reminderStatus.label}</span>
+              </span>
+            )}
+            {!note.reminder_at && isOwner && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(note);
+                }}
+                className="inline-flex items-center gap-1 text-[11px] text-rose-600 dark:text-rose-400 hover:text-rose-700 bg-rose-500/10 hover:bg-rose-500/20 px-2.5 py-1 rounded-lg cursor-pointer transition-colors"
+                title="Convert this thought to a deadline task"
+              >
+                <Clock className="w-3 h-3 shrink-0 text-rose-500" />
+                <span>+ Deadline</span>
+              </button>
             )}
           </div>
 
@@ -182,7 +372,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                 e.stopPropagation();
                 onSelect(note);
               }}
-              className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-ink-muted hover:text-primary hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
+              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-ink-muted hover:text-primary hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
               title="Inspect Note"
             >
               <Edit3 className="w-3.5 h-3.5" />
@@ -193,13 +383,12 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                   e.stopPropagation();
                   setIsConfirmDeleteOpen(true);
                 }}
-                className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg text-ink-muted hover:text-status-error hover:bg-canvas active:bg-hairline transition-colors cursor-pointer"
+                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl text-ink-muted hover:text-status-error hover:bg-status-error/10 active:bg-status-error/20 transition-colors cursor-pointer"
                 title="Delete Note"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             )}
-            <ChevronRight className="w-3.5 h-3.5 text-ink-subtle ml-0.5" />
           </div>
         </div>
       </article>

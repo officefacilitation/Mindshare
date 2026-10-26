@@ -3,13 +3,19 @@ import { Tag, User } from '../../lib/types';
 import { parseNoteContent } from '../../lib/parser';
 import { TagChip, MentionChip } from '../ui/Chip';
 import { api } from '../../lib/api';
-import { Send, Hash, AtSign, Sparkles, Image as ImageIcon, Loader2, X, Plus } from 'lucide-react';
+import { Send, Hash, AtSign, Sparkles, Image as ImageIcon, Loader2, X, Plus, Clock, Bell, Check } from 'lucide-react';
 
 interface InputBoxProps {
-  onSaveNote: (content: string, manualTags?: string[]) => Promise<{ note?: any; error?: string }>;
+  onSaveNote: (
+    content: string,
+    manualTags?: string[],
+    reminderAt?: string | null,
+    isCompleted?: boolean
+  ) => Promise<{ note?: any; error?: string }>;
   allTags: Tag[];
   allTeammates: User[];
   onAddToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  isTaskMode?: boolean;
 }
 
 interface AttachedImage {
@@ -23,6 +29,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
   allTags,
   allTeammates,
   onAddToast,
+  isTaskMode = false,
 }) => {
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -41,8 +48,94 @@ export const InputBox: React.FC<InputBoxProps> = ({
   const [autocompleteQuery, setAutocompleteQuery] = useState('');
   const [triggerIndex, setTriggerIndex] = useState<number | null>(null);
 
+  // Reminder & Deadline State
+  const [reminderAt, setReminderAt] = useState<string | null>(null);
+  const [showReminderBuilder, setShowReminderBuilder] = useState(false);
+  const [reminderDay, setReminderDay] = useState<'today' | 'tomorrow' | 'in_2_days' | 'custom'>('today');
+  const [reminderCustomDate, setReminderCustomDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [reminderTime, setReminderTime] = useState<'09:00' | '12:00' | '14:00' | '18:00' | '21:00' | 'in_1hr' | 'custom'>('18:00');
+  const [reminderCustomTime, setReminderCustomTime] = useState('18:00');
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Compute target Date from current button selections
+  const computeReminderDate = (
+    day: 'today' | 'tomorrow' | 'in_2_days' | 'custom',
+    customDateStr: string,
+    timePreset: '09:00' | '12:00' | '14:00' | '18:00' | '21:00' | 'in_1hr' | 'custom',
+    customTimeStr: string
+  ): Date => {
+    const now = new Date();
+    if (timePreset === 'in_1hr') {
+      return new Date(now.getTime() + 60 * 60 * 1000);
+    }
+
+    const target = new Date();
+    if (day === 'today') {
+      // Keep today
+    } else if (day === 'tomorrow') {
+      target.setDate(target.getDate() + 1);
+    } else if (day === 'in_2_days') {
+      target.setDate(target.getDate() + 2);
+    } else if (day === 'custom' && customDateStr) {
+      const parts = customDateStr.split('-').map(Number);
+      if (parts.length === 3) {
+        target.setFullYear(parts[0], parts[1] - 1, parts[2]);
+      }
+    }
+
+    const timeVal = timePreset === 'custom' ? customTimeStr : timePreset;
+    const [hh, mm] = (timeVal || '18:00').split(':').map(Number);
+    target.setHours(hh || 0, mm || 0, 0, 0);
+
+    return target;
+  };
+
+  // Helper to format reminder for display
+  const formatReminderBadge = (isoStr: string) => {
+    const d = new Date(isoStr);
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow = d.toDateString() === tomorrow.toDateString();
+
+    const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (isToday) return `Today at ${timeStr}`;
+    if (isTomorrow) return `Tomorrow at ${timeStr}`;
+    return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${timeStr}`;
+  };
+
+  const getReminderPreviewText = () => {
+    const d = computeReminderDate(reminderDay, reminderCustomDate, reminderTime, reminderCustomTime);
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrow = d.toDateString() === tomorrow.toDateString();
+
+    const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const dayStr = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : d.toLocaleDateString([], { month: 'short', day: 'numeric', weekday: 'short' });
+    return `${dayStr} at ${timeStr}`;
+  };
+
+  const handleConfirmReminder = () => {
+    const d = computeReminderDate(reminderDay, reminderCustomDate, reminderTime, reminderCustomTime);
+    setReminderAt(d.toISOString());
+    setShowReminderBuilder(false);
+    onAddToast(`Reminder set for ${getReminderPreviewText()}`, 'info');
+  };
+
+  const handleClearReminder = () => {
+    setReminderAt(null);
+    setShowReminderBuilder(false);
+    onAddToast('Reminder removed.', 'info');
+  };
 
   const liveParsed = parseNoteContent(content);
 
@@ -241,7 +334,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
     const fullContent = (trimmedText + imageMarkdown).trim();
 
     setIsSubmitting(true);
-    const res = await onSaveNote(fullContent);
+    const res = await onSaveNote(fullContent, undefined, reminderAt);
     setIsSubmitting(false);
 
     if (res.error) {
@@ -251,6 +344,8 @@ export const InputBox: React.FC<InputBoxProps> = ({
       setAttachedImages([]);
       setSuggestedAITags([]);
       setAutocompleteMode(null);
+      setReminderAt(null);
+      setShowReminderBuilder(false);
       onAddToast('Thought captured!', 'success');
       if (textareaRef.current) {
         textareaRef.current.style.height = '68px';
@@ -316,15 +411,47 @@ export const InputBox: React.FC<InputBoxProps> = ({
         } ${isDraggingOver ? 'border-primary bg-primary-light/10 ring-2 ring-primary/40' : ''}`}
       >
         <div className="p-3.5 sm:p-4.5">
+          {/* Active Reminder Badge */}
+          {reminderAt && (
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-500/10 text-rose-700 dark:text-rose-300 hairline-border border-rose-500/30 text-xs font-medium mb-2.5 shadow-subtle">
+              <Clock className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+              <span>Remind me: <strong>{formatReminderBadge(reminderAt)}</strong></span>
+              <button
+                type="button"
+                onClick={() => setShowReminderBuilder(true)}
+                className="ml-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+              >
+                Change
+              </button>
+              <button
+                type="button"
+                onClick={() => setReminderAt(null)}
+                className="ml-0.5 p-0.5 hover:bg-rose-500/20 rounded-md cursor-pointer"
+                title="Remove reminder"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
           <textarea
             ref={textareaRef}
             value={content}
             onChange={handleContentChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            onFocus={() => setIsFocused(true)}
+            onFocus={() => {
+              setIsFocused(true);
+              if (isTaskMode && !reminderAt) {
+                setShowReminderBuilder(true);
+              }
+            }}
             onBlur={() => setTimeout(() => setIsFocused(false), 200)}
-            placeholder="Capture a thought... type #tag, tag teammates with @name, paste or drag images..."
+            placeholder={
+              isTaskMode
+                ? "Add a task or deadline... type @name to assign, #tags to categorize..."
+                : "Capture a thought... type #tag, tag teammates with @name, paste or drag images..."
+            }
             className="w-full min-h-[68px] max-h-[360px] bg-transparent text-ink placeholder:text-ink-subtle text-base sm:text-sm font-sans leading-relaxed focus:outline-none resize-none"
             rows={2}
           />
@@ -401,6 +528,178 @@ export const InputBox: React.FC<InputBoxProps> = ({
               ))}
             </div>
           )}
+
+          {/* Inline Button-Driven Reminder Builder - Never overflows screen */}
+          {showReminderBuilder && (
+            <div className="mt-3 p-3.5 bg-canvas/70 rounded-xl hairline-border space-y-3 animate-slide-up text-ink">
+              <div className="flex items-center justify-between pb-2 hairline-b">
+                <span className="text-xs font-bold text-ink flex items-center gap-1.5">
+                  <Bell className="w-3.5 h-3.5 text-rose-500" /> Schedule Reminder
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowReminderBuilder(false)}
+                  className="p-1 rounded-lg text-ink-subtle hover:text-ink hover:bg-surface cursor-pointer"
+                  title="Close builder"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Step 1: Day selection buttons */}
+              <div>
+                <span className="text-[10px] uppercase font-bold text-ink-subtle tracking-wider block mb-1.5">
+                  1. Choose Day
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setReminderDay('today')}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded-lg hairline-border transition-all cursor-pointer text-center ${
+                      reminderDay === 'today'
+                        ? 'bg-primary text-white border-primary shadow-subtle font-semibold'
+                        : 'bg-surface hover:bg-canvas text-ink'
+                    }`}
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReminderDay('tomorrow')}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded-lg hairline-border transition-all cursor-pointer text-center ${
+                      reminderDay === 'tomorrow'
+                        ? 'bg-primary text-white border-primary shadow-subtle font-semibold'
+                        : 'bg-surface hover:bg-canvas text-ink'
+                    }`}
+                  >
+                    Tomorrow
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReminderDay('in_2_days')}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded-lg hairline-border transition-all cursor-pointer text-center ${
+                      reminderDay === 'in_2_days'
+                        ? 'bg-primary text-white border-primary shadow-subtle font-semibold'
+                        : 'bg-surface hover:bg-canvas text-ink'
+                    }`}
+                  >
+                    In 2 Days
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReminderDay('custom')}
+                    className={`px-2.5 py-1.5 text-xs font-medium rounded-lg hairline-border transition-all cursor-pointer text-center ${
+                      reminderDay === 'custom'
+                        ? 'bg-primary text-white border-primary shadow-subtle font-semibold'
+                        : 'bg-surface hover:bg-canvas text-ink'
+                    }`}
+                  >
+                    Pick Date...
+                  </button>
+                </div>
+
+                {reminderDay === 'custom' && (
+                  <div className="mt-2">
+                    <input
+                      type="date"
+                      value={reminderCustomDate}
+                      min={new Date().toISOString().split('T')[0]}
+                      onChange={(e) => setReminderCustomDate(e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs rounded-lg bg-surface hairline-border text-ink focus:outline-none focus:border-primary cursor-pointer"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Step 2: Time selection buttons */}
+              <div>
+                <span className="text-[10px] uppercase font-bold text-ink-subtle tracking-wider block mb-1.5">
+                  2. Choose Time
+                </span>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                  {[
+                    { label: '9:00 AM', val: '09:00' },
+                    { label: '12:00 PM', val: '12:00' },
+                    { label: '2:00 PM', val: '14:00' },
+                    { label: '6:00 PM', val: '18:00' },
+                    { label: '9:00 PM', val: '21:00' },
+                    { label: '+1 Hour', val: 'in_1hr' },
+                  ].map((t) => (
+                    <button
+                      key={t.val}
+                      type="button"
+                      onClick={() => setReminderTime(t.val as any)}
+                      className={`px-2 py-1.5 text-xs font-medium rounded-lg hairline-border transition-all cursor-pointer text-center ${
+                        reminderTime === t.val
+                          ? 'bg-primary text-white border-primary shadow-subtle font-semibold'
+                          : 'bg-surface hover:bg-canvas text-ink'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReminderTime('custom')}
+                    className={`text-[11px] px-2.5 py-1 rounded-lg hairline-border cursor-pointer transition-colors ${
+                      reminderTime === 'custom'
+                        ? 'bg-primary-light text-primary border-primary font-semibold'
+                        : 'bg-surface text-ink-muted hover:text-ink'
+                    }`}
+                  >
+                    Custom Time...
+                  </button>
+                  {reminderTime === 'custom' && (
+                    <input
+                      type="time"
+                      value={reminderCustomTime}
+                      onChange={(e) => setReminderCustomTime(e.target.value)}
+                      className="flex-1 max-w-[160px] px-2 py-1 text-xs rounded-lg bg-surface hairline-border text-ink focus:outline-none focus:border-primary cursor-pointer"
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Live Preview & Final Save / Cancel Buttons */}
+              <div className="pt-2.5 hairline-t flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-ink flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                  <span className="text-ink-muted text-[11px]">Will remind:</span>
+                  <strong className="text-ink font-semibold">{getReminderPreviewText()}</strong>
+                </div>
+
+                <div className="flex items-center gap-2 ml-auto">
+                  {reminderAt && (
+                    <button
+                      type="button"
+                      onClick={handleClearReminder}
+                      className="px-2.5 py-1 text-xs text-status-error hover:underline cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowReminderBuilder(false)}
+                    className="px-3 py-1 text-xs text-ink-muted hover:text-ink cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmReminder}
+                    className="px-3.5 py-1 text-xs font-semibold text-white bg-primary hover:bg-primary-hover active:scale-95 rounded-xl shadow-subtle flex items-center gap-1 cursor-pointer transition-all"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Set Reminder</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer Actions */}
@@ -454,6 +753,21 @@ export const InputBox: React.FC<InputBoxProps> = ({
               <span>Image</span>
             </button>
 
+            {/* Set Phone/Desktop Reminder Button */}
+            <button
+              type="button"
+              onClick={() => setShowReminderBuilder((prev) => !prev)}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg hairline-border text-[11px] font-medium transition-all cursor-pointer ${
+                reminderAt || showReminderBuilder
+                  ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/40 font-semibold shadow-subtle'
+                  : 'bg-canvas hover:bg-surface text-ink hover:text-rose-600'
+              }`}
+              title="Schedule phone and desktop deadline reminder"
+            >
+              <Bell className="w-3.5 h-3.5 text-rose-500" />
+              <span>{reminderAt ? 'Reminder Set' : 'Remind'}</span>
+            </button>
+
             <span className="hidden md:inline-block text-[11px] text-ink-subtle">
               <kbd className="px-1 py-0.5 bg-surface hairline-border rounded text-[10px] font-mono">Ctrl+Enter</kbd>
             </span>
@@ -472,7 +786,7 @@ export const InputBox: React.FC<InputBoxProps> = ({
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <>
-                  <Send className="w-3.5 h-3.5" /> Capture
+                  <Send className="w-3.5 h-3.5" /> {isTaskMode ? 'Add Task' : 'Capture'}
                 </>
               )}
             </button>

@@ -1,14 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl =
-  (import.meta as any).env?.VITE_SUPABASE_URL ||
-  'https://pyhsxxmrlbrwnklafyee.supabase.co';
+  (import.meta as any).env?.VITE_SUPABASE_URL || '';
 
 const supabaseAnonKey =
-  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5aHN4eG1ybGJyd25rbGFmeWVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MjAxNzksImV4cCI6MjEwMTk5NjE3OX0.YzKek43c8cSG6QHshoss9c6cJ2eCU17ZL8goEcdgvQo';
+  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn('[Supabase] VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY is missing from environment variables.');
+}
+
+export const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder', {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
