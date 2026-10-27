@@ -70,6 +70,10 @@ CREATE INDEX IF NOT EXISTS idx_notes_user_created
   ON public.notes (user_id, created_at DESC) 
   WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_notes_completion 
+  ON public.notes (user_id, is_completed) 
+  WHERE deleted_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_notes_fts 
   ON public.notes USING GIN (fts);
 

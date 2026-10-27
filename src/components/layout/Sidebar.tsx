@@ -39,7 +39,7 @@ interface SidebarProps {
   onCloseMobile?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({
+export const Sidebar = React.memo<SidebarProps>(({
   tags,
   teammates,
   currentUser,
@@ -453,4 +453,4 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </Modal>
     </>
   );
-};
+});

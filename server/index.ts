@@ -40,10 +40,34 @@ interface AuthRequest extends Request {
   token?: string;
 }
 
+// High-performance in-memory cache for validated sessions (TTL: 60s)
+interface CachedSession {
+  user: any;
+  userId: string;
+  userEmail: string;
+  client: any;
+  expiresAt: number;
+}
+const sessionCache = new Map<string, CachedSession>();
+
+// Cleanup stale sessions every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, val] of sessionCache.entries()) {
+    if (val.expiresAt <= now) {
+      sessionCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000).unref();
+
 // Helper: Get user-scoped Supabase client with JWT passed in headers
 function getDb(req: AuthRequest) {
   if (req.token && supabaseUrl && supabaseAnonKey) {
-    return createClient(supabaseUrl, supabaseAnonKey, {
+    const cached = sessionCache.get(req.token);
+    if (cached?.client && cached.expiresAt > Date.now()) {
+      return cached.client;
+    }
+    const client = createClient(supabaseUrl, supabaseAnonKey, {
       global: {
         headers: {
           Authorization: `Bearer ${req.token}`,
@@ -54,11 +78,15 @@ function getDb(req: AuthRequest) {
         autoRefreshToken: false,
       },
     });
+    if (cached) {
+      cached.client = client;
+    }
+    return client;
   }
   return supabase;
 }
 
-// Stateless Supabase JWT Authentication Middleware
+// Stateless Supabase JWT Authentication Middleware (with fast 60s memory caching)
 async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -71,9 +99,22 @@ async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) 
     return res.status(500).json({ error: 'Supabase client not initialized' });
   }
 
+  // 1. Fast path: return cached verified user in 0.01ms
+  const now = Date.now();
+  const cached = sessionCache.get(token);
+  if (cached && cached.expiresAt > now) {
+    req.user = cached.user;
+    req.userId = cached.userId;
+    req.userEmail = cached.userEmail;
+    req.token = token;
+    return next();
+  }
+
+  // 2. Slow path: verify token with Supabase Auth
   try {
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (error || !user) {
+      sessionCache.delete(token);
       return res.status(401).json({ error: 'Unauthorized: Invalid or expired session' });
     }
 
@@ -81,8 +122,19 @@ async function requireAuth(req: AuthRequest, res: Response, next: NextFunction) 
     req.userId = user.id;
     req.userEmail = user.email;
     req.token = token;
+
+    // Cache valid session for 60 seconds
+    sessionCache.set(token, {
+      user,
+      userId: user.id,
+      userEmail: user.email || '',
+      client: null,
+      expiresAt: now + 60 * 1000,
+    });
+
     next();
   } catch (err: any) {
+    sessionCache.delete(token);
     return res.status(401).json({ error: `Auth Error: ${err.message}` });
   }
 }

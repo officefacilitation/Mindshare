@@ -44,7 +44,7 @@ interface DetailPanelProps {
   onAddToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export const DetailPanel: React.FC<DetailPanelProps> = ({
+export const DetailPanel = React.memo<DetailPanelProps>(({
   note,
   currentUserId,
   currentUsername,
@@ -1461,4 +1461,4 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
       </Modal>
     </>
   );
-};
+});

@@ -17,7 +17,7 @@ interface HeaderProps {
   onSyncGoogleDrive?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({
+export const Header = React.memo<HeaderProps>(({
   currentUser,
   noteCount,
   tagCount,
@@ -344,4 +344,4 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
     </header>
   );
-};
+});

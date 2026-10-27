@@ -16,7 +16,7 @@ interface NoteCardProps {
   onMentionClick?: (username: string) => void;
 }
 
-export const NoteCard: React.FC<NoteCardProps> = ({
+export const NoteCard = React.memo<NoteCardProps>(({
   note,
   currentUserId,
   currentUsername,
@@ -99,21 +99,24 @@ export const NoteCard: React.FC<NoteCardProps> = ({
     return { label: `Due: ${label}`, isPast: false, isCompleted: false };
   };
 
-  const reminderStatus = getReminderStatus(note.reminder_at, note.is_completed);
+  const reminderStatus = React.useMemo(() => {
+    return getReminderStatus(note.reminder_at, note.is_completed);
+  }, [note.reminder_at, note.is_completed]);
 
-  // Extract embedded image URLs from markdown ![alt](url)
-  const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
-  const imageUrls: string[] = [];
-  let m;
-  while ((m = imageRegex.exec(note.content)) !== null) {
-    const url = m[1] || m[2];
-    if (url && !imageUrls.includes(url)) imageUrls.push(url);
-  }
-
-  // Clean raw markdown image syntax for text display
-  const cleanedText = note.content
-    .replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '')
-    .trim();
+  // Memoize extracted images and cleaned text to avoid repeated regex runs
+  const { cleanedText, imageUrls } = React.useMemo(() => {
+    const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+\.(?:png|jpg|jpeg|webp|gif))/gi;
+    const urls: string[] = [];
+    let m;
+    while ((m = imageRegex.exec(note.content)) !== null) {
+      const url = m[1] || m[2];
+      if (url && !urls.includes(url)) urls.push(url);
+    }
+    const text = note.content
+      .replace(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/g, '')
+      .trim();
+    return { cleanedText: text, imageUrls: urls };
+  }, [note.content]);
 
   const shouldTruncate = cleanedText.length > 220;
   const displayContent = shouldTruncate && !isExpanded
@@ -452,4 +455,4 @@ export const NoteCard: React.FC<NoteCardProps> = ({
       </Modal>
     </>
   );
-};
+});

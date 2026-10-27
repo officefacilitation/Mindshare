@@ -20,7 +20,7 @@ interface FeedListProps {
 
 const PAGE_SIZE = 25;
 
-export const FeedList: React.FC<FeedListProps> = ({
+export const FeedList = React.memo<FeedListProps>(({
   notes,
   currentUserId,
   currentUsername,
@@ -124,4 +124,4 @@ export const FeedList: React.FC<FeedListProps> = ({
       )}
     </div>
   );
-};
+});

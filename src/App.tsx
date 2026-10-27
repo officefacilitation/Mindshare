@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
 import { Note, ToastMessage, User, Tag } from './lib/types';
 import {
   getNotes,
@@ -20,7 +20,6 @@ import {
   switchFeed,
 } from './lib/storage';
 import { initNotifications } from './lib/notifications';
-import { exportNotesToExcel } from './lib/excelExport';
 import { api } from './lib/api';
 import { supabase } from './lib/supabase';
 import { parseSearchQuery, filterNotes } from './lib/search';
@@ -177,21 +176,45 @@ export function App() {
     return () => unsubscribe();
   }, [selectedNote, currentUser?.id]);
 
-  // Periodic poll, focus re-sync, and visibilitychange (for mobile foreground return)
+  // Intelligent polling: pauses when tab is hidden, refreshes immediately on return
   useEffect(() => {
     if (!isAuthed) return;
+    let interval: any = null;
+
+    const startPolling = () => {
+      if (!interval) {
+        interval = setInterval(() => {
+          if (!document.hidden && document.visibilityState === 'visible') {
+            refresh();
+          }
+        }, 20000);
+      }
+    };
+
+    const stopPolling = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
     const onFocusOrVisible = () => {
       if (document.visibilityState === 'visible') {
         refresh();
+        startPolling();
+      } else {
+        stopPolling();
       }
     };
+
     window.addEventListener('focus', onFocusOrVisible);
     document.addEventListener('visibilitychange', onFocusOrVisible);
-    const interval = setInterval(() => refresh(), 15000);
+    startPolling();
+
     return () => {
       window.removeEventListener('focus', onFocusOrVisible);
       document.removeEventListener('visibilitychange', onFocusOrVisible);
-      clearInterval(interval);
+      stopPolling();
     };
   }, [isAuthed, refresh]);
 
@@ -250,20 +273,25 @@ export function App() {
     }
   };
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
     const userNotes = getNotes('all');
     if (!userNotes || userNotes.length === 0) {
       addToast('No thoughts to export yet. Capture a thought first!', 'info');
       return;
     }
     addToast('Generating Excel backup...', 'info');
-    const success = exportNotesToExcel(userNotes, {
-      userHandle: currentUser?.username,
-    });
-    if (success) {
-      addToast(`Downloaded Excel backup (${userNotes.length} thoughts)!`, 'success');
-    } else {
-      addToast('Failed to generate Excel backup.', 'error');
+    try {
+      const { exportNotesToExcel } = await import('./lib/excelExport');
+      const success = exportNotesToExcel(userNotes, {
+        userHandle: currentUser?.username,
+      });
+      if (success) {
+        addToast(`Downloaded Excel backup (${userNotes.length} thoughts)!`, 'success');
+      } else {
+        addToast('Failed to generate Excel backup.', 'error');
+      }
+    } catch {
+      addToast('Failed to load Excel export module.', 'error');
     }
   };
 
@@ -326,6 +354,8 @@ export function App() {
     setSearchQuery('');
   };
 
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
   // Filter notes based on active filter, boolean search query & operator
   const filteredNotes = useMemo(() => {
     let result: Note[] = [];
@@ -350,7 +380,7 @@ export function App() {
           const tB = new Date(b.reminder_at!).getTime();
           return tA - tB;
         });
-    } else if (activeFilter.type === 'tag' || activeFilter.type === 'mention' || searchQuery.trim()) {
+    } else if (activeFilter.type === 'tag' || activeFilter.type === 'mention' || deferredSearchQuery.trim()) {
       // Tags, mentions, and search queries span across both personal notes and tagged notes
       const allNotes = getNotes('all');
       const taggedNotes = getNotes('tagged_me');
@@ -377,17 +407,17 @@ export function App() {
       );
     }
 
-    if (searchQuery.trim()) {
-      const parsedSearch = parseSearchQuery(searchQuery);
+    if (deferredSearchQuery.trim()) {
+      const parsedSearch = parseSearchQuery(deferredSearchQuery);
       // Respect UI operator unless user typed explicit boolean operators in the query
-      if (!/\b(AND|OR)\b/i.test(searchQuery)) {
+      if (!/\b(AND|OR)\b/i.test(deferredSearchQuery)) {
         parsedSearch.operator = searchOperator;
       }
       result = filterNotes(result, parsedSearch);
     }
 
     return result;
-  }, [notes, activeFilter, searchQuery, searchOperator]);
+  }, [notes, activeFilter, deferredSearchQuery, searchOperator]);
 
   const activeFilterTitle = useMemo(() => {
     if (searchQuery.trim()) return `Search: "${searchQuery}" (${searchOperator})`;
