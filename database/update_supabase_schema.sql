@@ -144,6 +144,9 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'notes' AND policyname = 'Notes update own') THEN
     DROP POLICY "Notes update own" ON public.notes;
   END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'notes' AND policyname = 'Notes update own or mentioned') THEN
+    DROP POLICY "Notes update own or mentioned" ON public.notes;
+  END IF;
   IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'notes' AND policyname = 'Notes delete own') THEN
     DROP POLICY "Notes delete own" ON public.notes;
   END IF;
@@ -204,10 +207,24 @@ CREATE POLICY "Notes insert own" ON public.notes
   FOR INSERT TO authenticated, anon
   WITH CHECK (auth.uid() IS NULL OR user_id = auth.uid());
 
-CREATE POLICY "Notes update own" ON public.notes
+CREATE POLICY "Notes update own or mentioned" ON public.notes
   FOR UPDATE TO authenticated, anon
-  USING (auth.uid() IS NULL OR user_id = auth.uid())
-  WITH CHECK (auth.uid() IS NULL OR user_id = auth.uid());
+  USING (
+    auth.uid() IS NULL 
+    OR user_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.mentions m 
+      WHERE m.note_id = notes.id AND m.user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    auth.uid() IS NULL 
+    OR user_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM public.mentions m 
+      WHERE m.note_id = notes.id AND m.user_id = auth.uid()
+    )
+  );
 
 CREATE POLICY "Notes delete own" ON public.notes
   FOR DELETE TO authenticated, anon
