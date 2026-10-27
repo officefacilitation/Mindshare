@@ -425,14 +425,18 @@ export async function toggleCompleteNote(
   const updateList = (list: Note[]) =>
     list.map((n) => {
       if (n.id !== id) return n;
-      let completedBy = Array.isArray(n.completed_by) ? [...n.completed_by] : [];
-      if (username) {
-        const u = username.toLowerCase();
+      let completedBy = Array.isArray(n.completed_by)
+        ? n.completed_by.map((x) => (typeof x === 'string' ? x : (x as any)?.username || '').toLowerCase().replace(/^@/, '')).filter(Boolean)
+        : [];
+      const u = username ? username.toLowerCase().replace(/^@/, '').trim() : '';
+      if (u) {
         if (isCompleted) {
           if (!completedBy.includes(u)) completedBy.push(u);
         } else {
           completedBy = completedBy.filter((x) => x !== u);
         }
+      } else if (!isCompleted) {
+        completedBy = [];
       }
       return {
         ...n,

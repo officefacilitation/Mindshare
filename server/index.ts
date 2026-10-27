@@ -15,9 +15,12 @@ const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABA
 
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
 }));
+
+// Preflight handler for all routes
+app.options('*', cors());
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -1021,15 +1024,22 @@ const handleToggleComplete = async (req: AuthRequest, res: Response) => {
     // 3. Determine target user to toggle:
     // Any workspace member can toggle completion for their own handle.
     // The note author can also toggle on behalf of any assignee.
-    const targetUser = (username || currentUsername || 'team').toLowerCase().trim();
+    const rawTarget = (username || currentUsername || 'team').toLowerCase().trim();
+    const targetUser = rawTarget.replace(/^@/, '');
 
     let currentCompletedBy: string[] = Array.isArray(noteRow.completed_by)
-      ? noteRow.completed_by.map((u: any) => typeof u === 'string' ? u.toLowerCase() : (u?.username || '').toLowerCase()).filter(Boolean)
+      ? noteRow.completed_by.map((u: any) => typeof u === 'string' ? u.toLowerCase().replace(/^@/, '').trim() : (u?.username || '').toLowerCase().replace(/^@/, '').trim()).filter(Boolean)
       : [];
 
     if (noteRow.is_completed && currentCompletedBy.length === 0 && noteRow.users?.username) {
-      currentCompletedBy.push(noteRow.users.username.toLowerCase());
+      currentCompletedBy.push(noteRow.users.username.toLowerCase().replace(/^@/, '').trim());
     }
+
+    // Participants = author + all mentioned teammates
+    const allParticipants = Array.from(new Set([
+      (noteRow.users?.username || '').toLowerCase().replace(/^@/, '').trim(),
+      ...((noteRow.mentions || []).map((m: any) => (m.users?.username || '').toLowerCase().replace(/^@/, '').trim()))
+    ].filter(Boolean)));
 
     const shouldMarkDone = isCompleted !== undefined ? Boolean(isCompleted) : !currentCompletedBy.includes(targetUser);
 
@@ -1039,23 +1049,29 @@ const handleToggleComplete = async (req: AuthRequest, res: Response) => {
         newCompletedBy.push(targetUser);
       }
     } else {
-      newCompletedBy = newCompletedBy.filter((u) => u !== targetUser);
+      if (username) {
+        newCompletedBy = newCompletedBy.filter((u) => u !== targetUser);
+      } else {
+        // Toggling main card checkbox off
+        if (allParticipants.length <= 1) {
+          newCompletedBy = [];
+        } else {
+          newCompletedBy = newCompletedBy.filter((u) => u !== targetUser && u !== currentUsername);
+        }
+      }
     }
-
-    // Participants = author + all mentioned teammates
-    const allParticipants = Array.from(new Set([
-      (noteRow.users?.username || '').toLowerCase(),
-      ...((noteRow.mentions || []).map((m: any) => (m.users?.username || '').toLowerCase()))
-    ].filter(Boolean)));
 
     const overallCompleted = allParticipants.length > 0
       ? allParticipants.every((p) => newCompletedBy.includes(p))
-      : newCompletedBy.length > 0;
+      : (shouldMarkDone && newCompletedBy.length > 0);
 
     const now = new Date().toISOString();
 
-    // 4. Update note in database
-    let { data: updated, error: updateErr } = await client
+    // 4. Update note in database (try primary client first, fallback to user-scoped db)
+    let updated: any = null;
+    let updateErr: any = null;
+
+    const res1 = await client
       .from('notes')
       .update({
         is_completed: overallCompleted,
@@ -1065,6 +1081,9 @@ const handleToggleComplete = async (req: AuthRequest, res: Response) => {
       .eq('id', id)
       .select('id, is_completed, completed_by, updated_at')
       .maybeSingle();
+
+    updated = res1.data;
+    updateErr = res1.error;
 
     if (updateErr && (updateErr.message?.includes('completed_by') || updateErr.code === '42703')) {
       const retry = await client
@@ -1078,6 +1097,24 @@ const handleToggleComplete = async (req: AuthRequest, res: Response) => {
         .maybeSingle();
       updated = { ...(retry.data || {}), completed_by: newCompletedBy };
       updateErr = retry.error;
+    }
+
+    // If client failed (e.g. RLS policy on anon key), retry with user-scoped JWT client
+    if ((updateErr || !updated) && db && db !== client) {
+      const res2 = await db
+        .from('notes')
+        .update({
+          is_completed: overallCompleted,
+          completed_by: newCompletedBy,
+          updated_at: now,
+        })
+        .eq('id', id)
+        .select('id, is_completed, completed_by, updated_at')
+        .maybeSingle();
+      if (!res2.error && res2.data) {
+        updated = res2.data;
+        updateErr = null;
+      }
     }
 
     if (updateErr) {

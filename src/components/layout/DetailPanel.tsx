@@ -171,8 +171,10 @@ export const DetailPanel: React.FC<DetailPanelProps> = ({
     return list;
   }, [note?.reminder_at, note?.author, note?.mentions, isOwner, currentUsername]);
 
-  const completedList = (note?.completed_by || []).map((u) => u.toLowerCase());
-  const isCurrentDone = currentUsername ? completedList.includes(currentUsername.toLowerCase()) : Boolean(note?.is_completed);
+  const completedList = (note?.completed_by || []).map((u) => u.toLowerCase().replace(/^@/, ''));
+  const isCurrentDone = currentUsername
+    ? (completedList.includes(currentUsername.toLowerCase().replace(/^@/, '')) || (Boolean(note?.is_completed) && participants.length <= 1))
+    : Boolean(note?.is_completed);
 
   if (!note) {
     return (

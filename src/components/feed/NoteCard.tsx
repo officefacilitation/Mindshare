@@ -69,8 +69,10 @@ export const NoteCard: React.FC<NoteCardProps> = ({
     return list;
   }, [note.reminder_at, note.author, note.mentions, isOwner, currentUsername]);
 
-  const completedList = (note.completed_by || []).map((u) => u.toLowerCase());
-  const isCurrentDone = currentUsername ? completedList.includes(currentUsername.toLowerCase()) : Boolean(note.is_completed);
+  const completedList = (note.completed_by || []).map((u) => u.toLowerCase().replace(/^@/, ''));
+  const isCurrentDone = currentUsername
+    ? (completedList.includes(currentUsername.toLowerCase().replace(/^@/, '')) || (Boolean(note.is_completed) && participants.length <= 1))
+    : Boolean(note.is_completed);
 
   // Format reminder deadline
   const getReminderStatus = (reminderStr?: string | null, isCompleted?: boolean) => {
@@ -210,12 +212,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                 )}
                 {note.reminder_at && (note.is_completed || completedList.length > 0) && (
                   <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                    {note.is_completed ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hairline-border border-emerald-500/30 shadow-xs">
-                        <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[3]" />
-                        <span>Completed by all assignees</span>
-                      </span>
-                    ) : (
+                    {completedList.length > 0 ? (
                       completedList.map((uname) => (
                         <span
                           key={uname}
@@ -225,7 +222,12 @@ export const NoteCard: React.FC<NoteCardProps> = ({
                           <span>Done by @{uname}</span>
                         </span>
                       ))
-                    )}
+                    ) : note.is_completed ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hairline-border border-emerald-500/30 shadow-xs">
+                        <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 stroke-[3]" />
+                        <span>Completed ✓</span>
+                      </span>
+                    ) : null}
                   </div>
                 )}
               </div>

@@ -259,11 +259,21 @@ export const api = {
 
   async toggleComplete(id: string, isCompleted: boolean, username?: string): Promise<{ success: boolean; note?: any }> {
     try {
-      const { ok, data } = await request(`/notes/${id}/toggle-complete`, {
-        method: 'PATCH',
+      // Primary: POST (universal cross-origin & browser preflight support)
+      let res = await request(`/notes/${id}/toggle-complete`, {
+        method: 'POST',
         body: JSON.stringify({ isCompleted, username }),
       });
-      return { success: Boolean(ok && data?.success), note: data?.note };
+
+      // Fallback: PATCH if POST not allowed
+      if (!res.ok && res.status === 405) {
+        res = await request(`/notes/${id}/toggle-complete`, {
+          method: 'PATCH',
+          body: JSON.stringify({ isCompleted, username }),
+        });
+      }
+
+      return { success: Boolean(res.ok && res.data?.success), note: res.data?.note };
     } catch {
       return { success: false };
     }
